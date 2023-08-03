@@ -1,0 +1,20 @@
+"@context":
+  ex: http://example.com/schema/v0/
+handlers:
+  -
+    event_type: ex:create_document
+    target_role: target
+    target_range: ex:document
+    code_text: |
+      function handler(event, existing) {
+        return {...event.data, "@id":event.data.target, target: undefined}
+      }
+  -
+    event_type: ex:update_document
+    target_role: target
+    target_range: ex:document
+    code_text: |
+      function handler(event, existing) {
+        delete event.data.target;
+        return Object.assign(existing['target'] || {}, event.data)
+      }

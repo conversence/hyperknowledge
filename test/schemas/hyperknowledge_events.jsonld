@@ -1,0 +1,37 @@
+{
+  "@context":
+  {
+    "@version": 1.1,
+    "hk": "https://hyperknowledge.org/schemas/hk#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "owl": "http://www.w3.org/2002/07/owl#",
+    "type": {
+      "@id": "hk:type",
+      "@type": "@id"
+    },
+    "range": {
+      "@id": "hk:range",
+      "@type": "@id"
+    },
+    "set_class": {"@id": "hk:set_class",
+      "@type": "@id"
+    },
+    "map_prop": {
+      "@id": "hk:map_prop",
+      "@type": "@id"
+    },
+    "eventSchemas": {
+      "@container": "@id",
+      "@id": "hk:eventSchemas"
+    },
+    "projectionSchemas": {
+      "@container": "@id",
+      "@id": "hk:projectionSchemas"
+    },
+    "attributes": {
+      "@id": "hk:attributeSchema"
+    }
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "@context": [
+    "https://hyperknowledge.org/schemas/hyperknowledge_events.jsonld",
+    {
+      "ex": "http://example.com/schema/v0/",
+      "@vocab": "http://example.com/schema/v0/",
+      "@base": "http://example.com/schema/v0/"
+    }
+  ],
+  "@id": "ex:",
+  "@type": "hk:Schema",
+  "eventSchemas": {
+    "create_document": {
+      "@type": "hk:EventSchema",
+      "attributes": [
+        {
+          "name": "target",
+          "range": "ex:document",
+          "create": true
+        },
+        {
+          "name": "title",
+          "range": "rdf:langString"
+        },
+        {
+          "name": "url",
+          "range": "xsd:anyURI"
+        }
+      ]
+    },
+    "update_document": {
+      "@type": "hk:EventSchema",
+      "attributes": [
+        {
+          "name": "target",
+          "range": "ex:document"
+        },
+        {
+          "name": "title",
+          "range": "rdf:langString"
+        },
+        {
+          "name": "url",
+          "range": "xsd:anyURI"
+        }
+      ]
+    },
+    "create_quote": {
+      "@type": "hk:EventSchema",
+      "attributes": [
+        {
+          "name": "target",
+          "range": "ex:quote",
+          "create": true
+        },
+        {
+          "name": "label",
+          "range": "rdf:langString"
+        },
+        {
+          "name": "document",
+          "range": "ex:document"
+        }
+      ]
+    }
+  },
+  "projectionSchemas": {
+    "document": {
+      "attributes": [
+        {
+          "name": "title",
+          "map_prop": "title",
+          "range": "rdf:langString"
+        },
+        {
+          "name": "url",
+          "range": "xsd:anyURI"
+        }
+      ]
+    },
+    "quote": {
+      "attributes": [
+        {
+          "name": "label",
+          "range": "rdf:langString"
+        },
+        {
+          "name": "document",
+          "range": "ex:document"
+        }
+      ]
+    }
+  }
+}

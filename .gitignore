@@ -1,0 +1,10 @@
+__pycache__
+*.pyc
+config.ini
+postgrest_*.conf
+files
+doc/_build
+doc/autodoc
+venv
+node_modules
+*.egg

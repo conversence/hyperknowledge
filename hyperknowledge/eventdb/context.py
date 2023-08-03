@@ -1,0 +1,79 @@
+"""This defines a subclass of rdflib's JsonLD context which caches the contexts in the database
+
+A lot of trickery to mix sync and async code.
+"""
+
+from typing import Optional, Set, Dict
+from threading import Thread
+from asyncio import current_task
+
+import anyio
+from sqlalchemy import select
+from rdflib import URIRef
+from rdflib.plugins.shared.jsonld.errors import (
+    INVALID_CONTEXT_ENTRY,
+    INVALID_REMOTE_CONTEXT,
+    RECURSIVE_CONTEXT_INCLUSION,
+)
+from rdflib.plugins.shared.jsonld.keys import CONTEXT
+from rdflib.plugins.shared.jsonld.context import Context as rdfContext
+from rdflib.plugins.shared.jsonld.util import source_to_json, urljoin
+
+from .. import make_scoped_session
+from .models import Struct, Vocabulary
+
+class Context(rdfContext):
+    def _fetch_context(
+        self, source: str, base: Optional[str], referenced_contexts: Set[str]
+    ):
+        # As in superclass...
+        source_url = urljoin(base, source)  # type: ignore[type-var]
+
+        if source_url in referenced_contexts:
+            raise RECURSIVE_CONTEXT_INCLUSION
+
+        referenced_contexts.add(source_url)  # type: ignore[arg-type]
+
+        if source_url in self._context_cache:
+            return self._context_cache[source_url]
+
+        # ...except this line
+        source = get_context_data(source_url)  # type: ignore[assignment]
+        if source and CONTEXT not in source:
+            raise INVALID_REMOTE_CONTEXT
+
+        self._context_cache[source_url] = source  # type: ignore[index]
+
+        return source
+
+
+CONTEXT_CACHE: Dict[URIRef, Context] = {}
+
+
+async def fetch_context(url: URIRef):
+    # This is being called from a thread, so we will create a new collection and scoped context
+    # OR... should we use run_coroutine_threadsafe()? Hmmm... probably.
+    Session = make_scoped_session(current_task)
+    async with Session() as session:
+        vocab = await Vocabulary.ensure(session, url)
+        r = await session.execute(select(Struct).filter_by(is_vocab=vocab.id, subtype='ld_context'))
+        if context_struct := r.first():
+            return context_struct[0].value
+        # TODO: wrap in async? in thread?
+        data = source_to_json(url)
+        session.add(Struct(value=data, subtype='ld_context', is_vocab=vocab.id))
+        await session.commit()
+        return data
+
+
+def get_context_data(url: URIRef):
+    # This is a convoluted way to call an async function in a sync context
+    result = None
+    def work():
+        nonlocal result
+        with anyio.from_thread.start_blocking_portal() as portal:
+            result = portal.call(fetch_context, url)
+    t = Thread(target=work)
+    t.start()
+    t.join()
+    return result

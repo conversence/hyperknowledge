@@ -7,10 +7,16 @@ BEGIN;
 
 CREATE TABLE public.source (
   id BIGINT NOT NULL PRIMARY KEY,
+  creator_id BIGINT,
   local_name varchar,
+  public_read boolean DEFAULT true,
+  public_write boolean DEFAULT false,
+  selective_write boolean DEFAULT false,
 
   CONSTRAINT source_id_fkey FOREIGN KEY (id)
-    REFERENCES public.vocabulary (id) ON DELETE CASCADE ON UPDATE CASCADE
+    REFERENCES public.vocabulary (id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT source_creator_fkey FOREIGN KEY (creator_id)
+    REFERENCES public.agent (id) ON DELETE CASCADE ON UPDATE SET NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS source_local_name_idx on public.source (local_name);

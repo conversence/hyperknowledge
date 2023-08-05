@@ -13,11 +13,33 @@ from rdflib import URIRef
 from rdflib.namespace import XSD, RDF, RDFS
 from sqlalchemy.orm.decl_api import DeclarativeBase
 from pydantic import BaseModel, Field, field_validator, create_model, ConfigDict, field_serializer
+from pydantic.fields import FieldInfo
 
 from . import SchemaId, Name, SchemaName, PydanticURIRef, QName
 from .context import Context
 # from rdflib.plugins.shared.jsonld.context import Context
 
+BaseModelT = TypeVar('BaseModelT', bound=BaseModel)
+
+def make_field_optional(field: FieldInfo, default: Any = None) -> Tuple[Any, FieldInfo]:
+    new = deepcopy(field)
+    new.default = default
+    new.annotation = Optional[field.annotation]  # type: ignore
+    return (new.annotation, new)
+
+
+def to_optional(model: Type[BaseModelT]) -> Type[BaseModelT]:
+    """Transform a schema into an equivalent optional schema"""
+    # https://github.com/pydantic/pydantic/issues/3120#issuecomment-1528030416
+    return create_model(  # type: ignore
+        f'Partial{model.__name__}',
+        __base__=model,
+        __module__=model.__module__,
+        **{
+            field_name: make_field_optional(field_info)
+            for field_name, field_info in model.model_fields.items()
+        }
+    )
 
 
 class JsonLdModel(BaseModel):
@@ -138,17 +160,20 @@ class LangStringModel(BaseModel):
     language: str = Field(alias='@lang')  # langcodes.Language
 
 
-class LocalSourceModel(BaseModel):
+class BaseSourceModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     id: Optional[int] = None
+    creator: Optional[str] = None
+    public_read: bool = True
+    public_write: bool = False
+    selective_write: bool = False
+
+class LocalSourceModel(BaseSourceModel):
     local_name: str
 
-class RemoteSourceModel(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: Optional[int] = None
+class RemoteSourceModel(BaseSourceModel):
     uri: PydanticURIRef
+
 
 SourceModel = Union[LocalSourceModel, RemoteSourceModel]
 
@@ -167,6 +192,9 @@ class AgentModel(BaseModel):
 
 class AgentModelWithPw(AgentModel):
     passwd: str
+
+
+AgentModelOptional = to_optional(AgentModelWithPw)
 
 
 HkSchema.model_rebuild()
@@ -259,30 +287,6 @@ EVENT_MODEL: type[GenericEventModel] = None
 class DynamicBaseSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-"""
-Ends up not being necessary, but I thought I could use a model for updates.
-https://github.com/pydantic/pydantic/issues/3120#issuecomment-1528030416
-
-BaseModelT = TypeVar('BaseModelT', bound=BaseModel)
-
-def make_field_optional(field: FieldInfo, default: Any = None) -> Tuple[Any, FieldInfo]:
-  new = deepcopy(field)
-  new.default = default
-  new.annotation = Optional[field.annotation]  # type: ignore
-  return (new.annotation, new)
-
-def to_optional(model: Type[BaseModelT]) -> Type[BaseModelT]:
-  return create_model(  # type: ignore
-    f'Partial{model.__name__}',
-    __base__=model,
-    __module__=model.__module__,
-    **{
-        field_name: make_field_optional(field_info)
-        for field_name, field_info in model.model_fields.items()
-    }
-    )
-
-"""
 
 def model_from_schema(schema: EventSchema, prefix: str) -> BaseModel:
     global KNOWN_MODELS, EVENT_MODEL

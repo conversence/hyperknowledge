@@ -285,22 +285,6 @@ class ensure_source(GenericFunction):
     inherit_cache = True
 
 
-class Source(Vocabulary):
-    __tablename__ = 'source'
-    __mapper_args__ = {
-        "polymorphic_identity": "source",
-    }
-    id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Vocabulary.id), primary_key=True)
-    local_name: Mapped[String] = mapped_column(String, unique=True)
-    last_event_t: Mapped["LastEvent"] = relationship(back_populates='source')
-
-    @classmethod
-    async def ensure(cls, session, uri: str, local_name: str, prefix: str=None) -> Source:
-        id_ = await session.scalar(ensure_source(uri, local_name, prefix))
-        await session.flush()
-        return  await session.get(cls, id_)
-
-
 class Agent(Base):
     __tablename__ = 'agent'
     id: Mapped[dbTopicId] = mapped_column(dbTopicId, primary_key=True)
@@ -311,6 +295,28 @@ class Agent(Base):
     is_admin: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
     created: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP, server_default="now() AT TIME ZONE 'UTC'")
     last_login_email_sent: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP)
+
+
+class Source(Vocabulary):
+    __tablename__ = 'source'
+    __mapper_args__ = {
+        "polymorphic_identity": "source",
+    }
+    id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Vocabulary.id), primary_key=True)
+    creator_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Agent.id))
+    local_name: Mapped[String] = mapped_column(String, unique=True)
+    public_read: Mapped[Boolean] = mapped_column(Boolean, server_default='true')
+    public_write: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
+    selective_write: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
+
+    last_event_t: Mapped[LastEvent] = relationship(back_populates='source')
+    creator: Mapped[Agent] = relationship(Agent, primaryjoin=creator_id==Agent.id)
+
+    @classmethod
+    async def ensure(cls, session, uri: str, local_name: str, public_read: bool=True, public_write: bool=False, selective_write: bool=False) -> Source:
+        id_ = await session.scalar(ensure_source(uri, local_name, public_read, public_write, selective_write))
+        await session.flush()
+        return  await session.get(cls, id_)
 
 
 class EventHandler(Base):

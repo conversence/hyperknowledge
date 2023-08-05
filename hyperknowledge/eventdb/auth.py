@@ -2,16 +2,17 @@
 
 from typing import Optional, Annotated
 from datetime import datetime, timedelta
+from contextlib import asynccontextmanager, suppress
 
 import anyio
 from datetime import timezone
-from sqlalchemy import select
+from sqlalchemy import select, text
 from fastapi import HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 
-from .. import config, target_db, Session
+from .. import config, target_db, Session, ClientSession
 from .schemas import (BaseModel, AgentModel, AgentModelWithPw)
 from .models import Agent
 
@@ -65,7 +66,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-async def get_current_agent(token: Annotated[str, Depends(oauth2_scheme)]) -> AgentModel:
+async def get_current_agent(token: Annotated[str, Depends(oauth2_scheme)]) -> Optional[AgentModel]:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -101,3 +102,37 @@ async def get_current_active_agent(
     if not current_agent.confirmed:
         raise HTTPException(status_code=400, detail="Not confirmed")
     return current_agent
+
+CurrentAgentType = Annotated[AgentModel, Depends(get_current_agent)]
+CurrentActiveAgentType = Annotated[AgentModel, Depends(get_current_active_agent)]
+
+async def set_role(session, agent_name: str):
+    db_name = str(session.bind.engine.url).split('/')[-1]
+    await session.execute(text(f"SET ROLE {db_name}__{agent_name}"))
+
+@asynccontextmanager
+async def agent_session(agent: Optional[AgentModel]):
+    async with ClientSession() as session:
+        try:
+            if agent:
+                await set_role(session, f"m_{agent.id}")
+            yield session
+        finally:
+            if agent:
+                with suppress(Exception):
+                    await session.rollback()
+                    await set_role(session, "client")
+                    await session.commit()
+
+@asynccontextmanager
+async def escalated_session(session):
+    try:
+        current_user = await session.scalar(text("select current_user"))
+        current_user = current_user.split("__")[1]
+        if current_user != "owner":
+            await set_role(session, "owner")
+        yield session
+    finally:
+        if current_user != "owner":
+            with suppress(Exception):
+                await set_role(session, current_user)

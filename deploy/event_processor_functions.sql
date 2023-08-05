@@ -5,6 +5,15 @@
 
 BEGIN;
 
+\set dbo :dbn '__owner';
+\set dbm :dbn '__member';
+\set dbc :dbn '__client';
+
+GRANT SELECT, INSERT,UPDATE, DELETE ON TABLE public.event_processor TO :dbm;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.event_processor_global_status TO :dbm;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.event_processor_source_status TO :dbm;
+-- TODO: Row-level permissions
+
 -- System user with ID 0
 INSERT INTO agent (id, email, username, passwd, confirmed, is_admin) VALUES (0, 'system@hyperknowledge.org', 'system', '', true, true)
   ON CONFLICT (id) DO NOTHING;

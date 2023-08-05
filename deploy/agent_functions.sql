@@ -14,10 +14,11 @@ BEGIN;
 --
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.agent TO :dbm;
-GRANT INSERT ON TABLE public.agent TO :dbc;
+GRANT SELECT, INSERT ON TABLE public.agent TO :dbc;
+-- TODO: Row permissions
 
-REVOKE SELECT ON TABLE public.agent FROM :dbc;
-GRANT SELECT (id, username, username) ON TABLE public.agent TO :dbc;
+-- REVOKE SELECT ON TABLE public.agent FROM :dbc;
+-- GRANT SELECT (id, username, username) ON TABLE public.agent TO :dbc;
 GRANT SELECT ON public.public_agent TO :dbc;
 GRANT SELECT ON public.public_agent TO :dbm;
 
@@ -225,7 +226,6 @@ CREATE OR REPLACE FUNCTION public.before_update_agent() RETURNS trigger
         END IF;
         NEW.passwd = crypt(NEW.passwd, gen_salt('bf'));
       END IF;
-      NEW.updated_at := now();
       IF NEW.is_admin != OLD.is_admin AND NOT public.is_superadmin() THEN
         RAISE EXCEPTION 'permission superadmin / change user permissions';
       END IF;

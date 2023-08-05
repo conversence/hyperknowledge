@@ -5,6 +5,30 @@
 
 BEGIN;
 
+\set dbo :dbn '__owner';
+\set dbm :dbn '__member';
+\set dbc :dbn '__client';
+
+GRANT SELECT,INSERT, UPDATE ON TABLE public.topic TO :dbm;
+GRANT SELECT ON TABLE public.topic to :dbc;
+GRANT SELECT,INSERT, UPDATE ON TABLE public.vocabulary TO :dbm;
+GRANT SELECT ON TABLE public.vocabulary to :dbc;
+GRANT SELECT,INSERT ON TABLE public.term TO :dbm;
+GRANT SELECT ON TABLE public.term to :dbc;
+GRANT SELECT,INSERT ON TABLE public.uuidentifier TO :dbm;
+GRANT SELECT ON TABLE public.uuidentifier to :dbc;
+GRANT SELECT,INSERT ON TABLE public.langstring TO :dbm;
+GRANT SELECT ON TABLE public.langstring to :dbc;
+GRANT SELECT,INSERT ON TABLE public.struct TO :dbm;
+GRANT SELECT ON TABLE public.struct to :dbc;
+GRANT SELECT,INSERT ON TABLE public.binary_data TO :dbm;
+GRANT SELECT ON TABLE public.binary_data to :dbc;
+GRANT SELECT ON TABLE public.schema_defines TO :dbm;
+GRANT SELECT ON TABLE public.schema_defines to :dbc;
+GRANT USAGE ON SEQUENCE public.topic_id_seq to :dbm;
+GRANT USAGE ON SEQUENCE public.topic_id_seq to :dbc;
+
+
 CREATE OR REPLACE FUNCTION public.after_create_langstring() RETURNS trigger
   LANGUAGE plpgsql AS $$
     BEGIN
@@ -191,24 +215,6 @@ CREATE OR REPLACE FUNCTION public.ensure_uuid(value_ UUID DEFAULT NULL) RETURNS 
       END IF;
     END IF;
     RETURN uid;
-  END;
-$$;
-
-
-CREATE OR REPLACE FUNCTION public.ensure_source(url varchar, local_name varchar, prefix varchar DEFAULT NULL) RETURNS BIGINT
-  LANGUAGE plpgsql AS $$
-  DECLARE
-    source_url_id BIGINT;
-    source_id BIGINT;
-  BEGIN
-    SELECT ensure_vocabulary(url, prefix) INTO source_url_id STRICT;
-    SELECT id INTO source_id FROM source WHERE id=source_url_id;
-    IF source_id IS NULL THEN
-      INSERT INTO public.source (id, local_name) VALUES (source_url_id, ensure_source.local_name)
-      ON CONFLICT (id) DO UPDATE SET local_name = ensure_source.local_name;
-      UPDATE public.topic SET base_type = 'source' WHERE id=source_url_id;
-    END IF;
-    return source_url_id;
   END;
 $$;
 

@@ -4,7 +4,7 @@ from typing import List, Tuple, Dict
 from itertools import chain
 
 from sqlalchemy import (
-    Column, String, Boolean, DateTime, Date, Time, Float, Integer, BINARY, Text, select)
+    Column, String, Boolean, DateTime, Date, Time, Float, Integer, BINARY, Text, select, text)
 from sqlalchemy.schema import CreateTable, CreateIndex
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.dialects.postgresql import (INTERVAL, TIMESTAMP, ARRAY, insert)
@@ -17,6 +17,8 @@ from .models import Base, ProjectionMixin, ProjectionTable, Struct, schema_defin
 from .schemas import (
     HkSchema, ProjectionAttributeSchema, ProjectionSchema, models_from_schemas, LangStringModel,
     getProjectionSchemas, scalar_field_types)
+from .auth import escalated_session
+
 
 column_types = {
     XSD.anyURI: String,
@@ -124,8 +126,15 @@ async def create_tables(schema: HkSchema, schema_struct_id: dbTopicId, overwrite
             await session.delete(row[0])
             await session.commit()
         if overwrite or not row:
-            await session.execute(CreateTable(cls.__table__))
-            session.add(ProjectionTable(schema_id=schema_struct_id, tablename=tablename))
+            async with escalated_session(session) as esession:
+                await esession.execute(CreateTable(cls.__table__))
+                esession.add(ProjectionTable(schema_id=schema_struct_id, tablename=tablename))
+                db_name = str(esession.bind.engine.url).split('/')[-1]
+                await esession.execute(text(f"GRANT SELECT ON TABLE public.{tablename} to {db_name}__client"))
+                await esession.execute(text(f"GRANT SELECT ON TABLE public.{tablename} to {db_name}__member"))
+                await esession.execute(text(f"ALTER TABLE public.{tablename} ENABLE ROW LEVEL SECURITY"))
+                await esession.execute(text(f"DROP POLICY IF EXISTS {tablename}_select_policy ON public.{tablename}"))
+                await esession.execute(text(f"CREATE POLICY {tablename}_select_policy ON public.{tablename} FOR SELECT USING (can_read_source(source_id))"))
     return classes
 
 

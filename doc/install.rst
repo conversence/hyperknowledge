@@ -40,13 +40,16 @@ HyperKnowledge
 1. Clone the repository and ``cd`` into it
 2. Create a virtual environment (``python3.10 -mvenv venv``) and activate it (``. ./venv/bin/activate``)
 3. Install the application (``pip install -e .``)
-  1. Note that the PyMiniRacer dependency can be hard to install. There is a mac wheel [here](https://idealoom.org/wheelhouse/py_mini_racer-0.6.0-py2.py3-none-macosx_13_0_arm64.whl)
+  1. Note that the PyMiniRacer dependency can be hard to install on mac. There is a mac wheel [here](https://idealoom.org/wheelhouse/py_mini_racer-0.6.0-py2.py3-none-macosx_13_0_arm64.whl)
 4. Create a skeleton config.ini file by calling initial setup. Exact arguments will depend on platform. The point is to pass database administrator credentials.
 
   1. Ubuntu, assuming a postgres user exists, and the current user is a sudoer:
 
     1. ``python scripts/initial_setup.py --app_name HyperKnowledge --sudo -u postgres``
-    2. Note: I have a non-sudoer user to run HyperKnowledge, but login as a sudoer user when necessary for some commands.
+    2. If the installing user is not a sudoer, have a sudoer run this command, then
+       ``chown`` the resulting files so they are readable by the installing user.
+       The sudoer must be able to read all files and write in the directory.
+       The easiest way is for the sudoer and installer to share a group.
 
   2. Mac, assuming the database accepts the logged-in user as a database admin:
 
@@ -57,10 +60,11 @@ HyperKnowledge
 5. Initialize the development database
 
   1. ``python scripts/db_updater.py init``
-  2. ``python scripts/db_updater.py deploy``
-  3. The last command can and should be reapplied to run migrations whenever changes are made to the database schema.
-  4. The need to do so can be verified with ``python scripts/db_updater.py status``.
-  5. Note: The initial deployment may require a sudoer user on ubuntu.
+  2. Ubuntu: if the installing user is not a sudoer, have the sudoer run this:
+      ``python scripts/db_updater.py deploy -f admin``
+  3. ``python scripts/db_updater.py deploy``
+  4. The last command can and should be reapplied to run migrations whenever changes are made to the database schema.
+  5. The need to do so can be verified with ``python scripts/db_updater.py status``.
 
 Then you should be able to run the server for development with
 

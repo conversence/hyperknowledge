@@ -296,6 +296,8 @@ class Agent(Base):
     created: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP, server_default="now() AT TIME ZONE 'UTC'")
     last_login_email_sent: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP)
 
+    source_permissions: Mapped[List[AgentSourcePermission]] = relationship("AgentSourcePermission", back_populates="agent")
+    source_selective_permissions: Mapped[List[AgentSourceSelectivePermission]] = relationship("AgentSourceSelectivePermission", back_populates="agent")
 
 class Source(Vocabulary):
     __tablename__ = 'source'
@@ -390,6 +392,31 @@ class ProjectionTable(Base):
     __tablename__ = 'projection_table'
     schema_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Struct.id), primary_key=True)
     tablename: Mapped[String] = mapped_column(String, primary_key=True)
+
+
+
+class AgentSourcePermission(Base):
+    __tablename__ = 'agent_source_permission'
+    agent_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Agent.id), primary_key=True)
+    source_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Source.id), primary_key=True)
+    is_admin: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
+    allow_read: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
+    allow_write: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
+    allow_all_write: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
+
+    agent: Mapped[Agent] = relationship(Agent, back_populates="source_permissions")
+    source: Mapped[Source] = relationship(Source)
+
+
+class AgentSourceSelectivePermission(Base):
+    __tablename__ = 'agent_source_selective_permission'
+    agent_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Agent.id), primary_key=True)
+    source_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Source.id), primary_key=True)
+    event_type_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Term.id), primary_key=True)
+
+    agent: Mapped[Agent] = relationship(Agent, back_populates="source_selective_permissions")
+    source: Mapped[Source] = relationship(Source)
+    event_type: Mapped[Term] = relationship(Term)
 
 
 class ProjectionMixin:

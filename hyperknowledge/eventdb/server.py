@@ -141,7 +141,7 @@ async def lifespan(app: FastAPI):
     start_listen_thread()
     yield
     # Clean up
-    await stop_listen_thread()
+    stop_listen_thread()
 
 
 app = FastAPI(lifespan=lifespan)

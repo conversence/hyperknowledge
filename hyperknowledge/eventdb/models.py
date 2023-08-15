@@ -298,6 +298,7 @@ class Agent(Base):
 
     source_permissions: Mapped[List[AgentSourcePermission]] = relationship("AgentSourcePermission", back_populates="agent")
     source_selective_permissions: Mapped[List[AgentSourceSelectivePermission]] = relationship("AgentSourceSelectivePermission", back_populates="agent")
+    processors: Mapped[List[EventProcessor]] = relationship("EventProcessor", back_populates="owner")
 
 class Source(Vocabulary):
     __tablename__ = 'source'
@@ -364,28 +365,11 @@ class EventProcessor(Base):
     id: Mapped[Integer] = mapped_column(Integer, primary_key=True)
     name: Mapped[String] = mapped_column(String, nullable=False)
     owner_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Agent.id), nullable=False)
-    all_sources: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
-
-    ev_proc_source_statuses: Mapped[List["EventProcessorSourceStatus"]] = relationship(back_populates="event_processor")
-    ev_proc_global_status: Mapped["EventProcessorGlobalStatus"] = relationship(back_populates="event_processor")
-
-
-class EventProcessorSourceStatus(Base):
-    __tablename__ = 'event_processor_source_status'
-    id: Mapped[Integer] = mapped_column(Integer, ForeignKey(EventProcessor.id), nullable=False, primary_key=True)
-    source_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Source.id), primary_key=True, nullable=True)
+    source_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Source.id), nullable=True)
     last_event_ts: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP)
 
-    event_processor: Mapped[EventProcessor] = relationship(back_populates="ev_proc_source_statuses")
-
-
-class EventProcessorGlobalStatus(Base):
-    __tablename__ = 'event_processor_global_status'
-    id: Mapped[Integer] = mapped_column(Integer, ForeignKey(EventProcessor.id), nullable=False, primary_key=True)
-    last_event_ts: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP)
-
-    event_processor: Mapped[EventProcessor] = relationship(back_populates="ev_proc_global_status")
-
+    owner: Mapped[Agent] = relationship(Agent, back_populates="processors")
+    source: Mapped[Source] = relationship(Source)
 
 
 class ProjectionTable(Base):
@@ -446,6 +430,5 @@ async def delete_data(session):
     await session.execute(delete(Topic))
     await session.execute(delete(Agent).filter(Agent.id > 0))
     await session.execute(delete(EventProcessor).filter(EventProcessor.owner_id > 0))
-    await session.execute(update(EventProcessorGlobalStatus).values(last_event_ts = None))
-    await session.execute(update(EventProcessorSourceStatus).values(last_event_ts = None))
+    await session.execute(update(EventProcessor).values(last_event_ts = None))
     await session.commit()

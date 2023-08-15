@@ -22,7 +22,7 @@ from py_mini_racer import MiniRacer
 from .. import target_db, config, make_scoped_session
 from . import dbTopicId
 from .models import (
-    Base, EventProcessor, EventProcessorGlobalStatus, Event, Source, Term, Topic, EventHandler
+    Base, EventProcessor, Event, Source, Term, Topic, EventHandler
 )
 from .schemas import getEventModel, HkSchema, getProjectionSchemas, ProjectionSchema
 from .make_tables import KNOWN_DB_MODELS, db_to_projection, projection_to_db
@@ -185,9 +185,9 @@ class Processor(Thread):
         async with self.session_maker() as session:
             if last_timestamp is None:
                 # "system" agent has id 0
-                main_processor_id = await session.scalar(select(EventProcessor.id).filter_by(owner_id=0, name='processor'))
-                assert main_processor_id, "Processor not defined"
-                last_timestamp = await session.scalar(select(EventProcessorGlobalStatus.last_event_ts).filter_by(id=main_processor_id))
+                main_processor = await session.get(EventProcessor, 0)
+                assert main_processor, "Processor not defined"
+                last_timestamp = main_processor.last_event_ts
             while self.status < lifecycle.cancelling and (last_timestamp is None or last_timestamp < latest_timestamp):
                 event_query = select(Event).order_by(Event.created).limit(1)
                 if last_timestamp is not None:
@@ -209,13 +209,7 @@ class Processor(Thread):
                     raise e
                 # Mark the event as processed
                 last_timestamp = event.created
-                await session.execute(
-                    insert(EventProcessorGlobalStatus
-                        ).values(id=main_processor_id, last_event_ts=last_timestamp
-                        ).on_conflict_do_update(
-                            constraint='event_processor_global_status_pkey',
-                            set_=dict(last_event_ts=last_timestamp)
-                        ))
+                main_processor.last_event_ts = last_timestamp
                 await session.commit()
         self.set_status(lifecycle.started)
 

@@ -315,6 +315,11 @@ class Source(Vocabulary):
     last_event_t: Mapped[LastEvent] = relationship(back_populates='source')
     creator: Mapped[Agent] = relationship(Agent, primaryjoin=creator_id==Agent.id)
 
+    def filter_event_query(self, query, session, alias=None):
+        target = alias or Event
+        # TODO: class dependencies
+        return query.filter(target.source_id == self.id)
+
     @classmethod
     async def ensure(cls, session, uri: str, local_name: str, public_read: bool=True, public_write: bool=False, selective_write: bool=False) -> Source:
         id_ = await session.scalar(ensure_source(uri, local_name, public_read, public_write, selective_write))

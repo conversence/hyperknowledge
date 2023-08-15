@@ -23,7 +23,7 @@ from .models import (Source, Event, Struct, UUIDentifier, Term, Vocabulary, Topi
 from .make_tables import read_existing_projections, KNOWN_DB_MODELS, process_schema, db_to_projection
 from .auth import (
     authenticate_agent, create_access_token, Token, CurrentAgentType, CurrentActiveAgentType)
-from .projection_processor import start_listen_thread, stop_listen_thread, forget_handler
+from .processor import start_listen_thread, stop_listen_thread, forget_handler
 
 log = logging.getLogger()
 

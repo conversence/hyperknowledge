@@ -13,6 +13,7 @@ from enum import Enum, IntEnum
 import logging
 from time import sleep
 import asyncio
+from json import JSONDecodeError
 
 import anyio
 from anyio.from_thread import start_blocking_portal, BlockingPortal
@@ -339,6 +340,8 @@ class Dispatcher(AbstractProcessorQueue, Thread):
         self.projection_processor.stop_processor()
         if was_active:
             sleep(0.1)
+        if self.session_maker:
+            self.tg.start_soon(self.session_maker.close_all)
         self.tg.cancel_scope.cancel()
         self.set_status(lifecycle.cancelled)
 
@@ -403,6 +406,11 @@ class WebSocketDispatcher(PushProcessorQueue):
             for processor in self.by_source[source_id].values():
                 processor.add_event(event)
 
+    def stop_processor(self):
+        for handler in self.sockets.values():
+            self.tg.start_soon(handler.close)
+        super().stop_processor()
+
 
 class WebSocketProcessor(PushProcessorQueue):
     """Processors keep track of position in the event stream for each source.
@@ -448,23 +456,29 @@ class WebSocketHandler():
 
 
     async def listen(self, source_name: str, proc_name: Optional[str]=None, start_time:Union[QueuePosition, datetime]=QueuePosition.current) -> WebSocketProcessor:
-        proc_name = proc_name or source_name
+        assert proc_name or source_name
         if proc_name in self.processors:
             return
         async with Session() as session:
-            r = await session.execute(
-                select(EventProcessor).filter_by(owner_id=self.agent.id, name=proc_name)
-                .join(Source).filter_by(local_name=source_name).options(joinedload(EventProcessor.source)))
+            q = select(EventProcessor).filter_by(owner_id=self.agent.id)
+            if proc_name:
+                q = q.filter_by(name=proc_name)
+            if source_name:
+                q = q.join(Source).filter_by(local_name=source_name)
+            q = q.options(joinedload(EventProcessor.source))
+            r = await session.execute(q)
             if r := r.first():
                 (processor,) = r
-            else:
+            elif source_name:
                 source = await session.execute(select(Source).filter_by(local_name=source_name))
                 source = source.first()
                 if not source:
                     raise RuntimeError(f"No such source {source_name}")
                 (source,) = source
-                processor = EventProcessor(source=source, owner_id=self.agent.id, name=proc_name)
+                processor = EventProcessor(source=source, owner_id=self.agent.id, name=proc_name or source_name)
                 session.add(processor)
+            else:
+                raise RuntimeError(f"No such processor {proc_name}")
             self.set_start_time(processor, start_time)
             # TODO
             source_set = {processor.source.id}
@@ -487,59 +501,75 @@ class WebSocketHandler():
                 delete(EventProcessor).where(owner_id=self.agent.id, name=proc_name))
             session.commit()
 
+    async def close(self):
+        for proc_name in self.processors:
+            await self.mute(proc_name)
+        self.socket.close()
+
     async def handle_ws(self):
         alive = True
         ws = self.socket
         try:
             while alive:
-                cmd = await ws.receive_text()
-                cmd = cmd.strip()
-                if not cmd:
+                try:
+                    cmd_data = await ws.receive_json()
+                except JSONDecodeError as e:
+                    await ws.send_json(dict(error=f"Invalid JSON {e.msg}"))
                     continue
-                cmd = cmd.split()
-                base_cmd = cmd.pop(0).lower()
+                base_cmd = cmd_data.get('cmd')
+                if not base_cmd:
+                    await ws.send_json(dict(error="Please provide cmd"))
+                    continue
                 if base_cmd == 'listen':
-                    if not (1 <= len(cmd) <= 3):
-                        await ws.send_text("Format: Listen source_name (proc_name) (start_time)")
-                        continue
-                    if len(cmd) == 3 and cmd[2] not in QueuePosition._member_map_:
+                    source = cmd_data.get('source')
+                    processor = cmd_data.get('processor')
+                    if not (source or processor):
+                        await ws.send_json(dict(error="Include source or processor"))
+                    start_time = cmd_data.get('start') or "current"
+                    if start_time in QueuePosition._member_map_:
+                        start_time = QueuePosition._member_map_[start_time]
+                    else:
                         try:
-                            cmd[2] = datetime.fromisoformat(cmd[2])
+                            start_time = datetime.fromisoformat(start_time)
                         except ValueError:
-                            await ws.send_text(f"Invalid start_time: Must be a iso-formatted date or in {QueuePosition._member_names_}.")
+                            await ws.send_json(dict(error=f"Invalid start_time: Must be a iso-formatted date or in {QueuePosition._member_names_}."))
                             continue
                     try:
-                        await self.listen(*cmd)
-                        await ws.send_text(f"Listening to {cmd[1] if len(cmd) > 1 else cmd[0]}")
+                        await self.listen(source, processor, start_time)
+                        await ws.send_json(dict(listen=processor or source))
                     except AssertionError:
-                        await ws.send_text(f"No such source {cmd[0]}")
+                        if source:
+                            await ws.send_json(dict(error=f"No such source {source}"))
+                        else:
+                            await ws.send_json(dict(error=f"No such processor {processor}"))
                 elif base_cmd == 'mute':
-                    if len(cmd) != 1:
-                        await ws.send_text("Format: Mute proc_name")
+                    processor = cmd_data.get('processor')
+                    if not processor:
+                        await ws.send_json(dict(error="Specify processor"))
                         continue
                     try:
-                        await self.mute(cmd[0])
-                        await ws.send_text(f"Muted {cmd[0]}")
+                        await self.mute(processor)
+                        await ws.send_json(dict(mute=processor))
                     except KeyError:
-                        await ws.send_text(f"No such processor {cmd[0]}")
+                        await ws.send_json(dict(error=f"No such processor {processor}"))
                 elif base_cmd == 'delete':
-                    if len(cmd) != 1:
-                        await ws.send_text("Format: Mute proc_name")
+                    processor = cmd_data.get('processor')
+                    if not processor:
+                        await ws.send_json(dict(error="Specify processor"))
                         continue
                     try:
-                        await self.delete(cmd[0])
-                        await ws.send_text(f"Deleted {cmd[0]}")
+                        await self.delete(processor)
+                        await ws.send_json(dict(delete=processor))
                     except KeyError:
-                        await ws.send_text(f"No such processor {cmd[0]}")
+                        await ws.send_json(dict(error=f"No such processor {processor}"))
                 elif base_cmd == 'close':
-                    if len(cmd):
-                        await ws.send_text("Format: Close")
-                        continue
                     alive = False
                 else:
-                    await ws.send_text("Unknown command")
+                    await ws.send_json(dict(error="Unknown command"))
         except WebSocketDisconnect:
             pass
+        except Exception as e:
+            log.exception(e)
         finally:
             exc = None
             if ws.client_state != WebSocketState.DISCONNECTED:

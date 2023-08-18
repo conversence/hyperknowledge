@@ -2,6 +2,7 @@
 from typing import List, Dict, Annotated, Tuple, Union, Optional
 from contextlib import asynccontextmanager
 from datetime import timedelta, datetime
+from json import JSONDecodeError
 import logging
 
 from typing_extensions import TypedDict
@@ -13,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Request, Depends, status, Response, 
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.websockets import WebSocket
 from fastapi.responses import HTMLResponse
+from starlette.websockets import WebSocketDisconnect
 
 
 from .. import ClientSession, Session, production
@@ -485,17 +487,26 @@ if not production:
 async def websocket(websocket: WebSocket):
     await websocket.accept()
     # Deciding to do the login within the WebSocket rather than use cookies.
-    token = await websocket.receive_text()
-    if token.split()[0].lower() in ("bearer", "login"):
-        token = token.split(' ', 1)[1]
-    try:
-        agent_model = await get_current_agent(token)
-        assert agent_model, "Invalid token"
-    except Exception as e:
-        print(e)
-        await websocket.send_text("Invalid login")
-        await websocket.close()
-        return
-    # await websocket.send_text(agent_model.model_dump_json())
+    while True:
+        try:
+            token_data = await websocket.receive_json()
+        except JSONDecodeError as e:
+            await websocket.send_json(dict(error=f"Invalid JSON {e.msg}"))
+            continue
+        except WebSocketDisconnect as e:
+            return
+        token = token_data.get('token')
+        if not token:
+            await websocket.send_json(dict(error="first provide a login token"))
+            continue
+        agent_model = None
+        try:
+            agent_model = await get_current_agent(token)
+        except Exception as e:
+            log.exception(e)
+        if agent_model:
+            await websocket.send_json(dict(login=agent_model.username))
+            break
+        await websocket.send_json(dict(error="Invalid login token"))
     handler = WebSocketDispatcher.dispatcher.add_socket(websocket, agent_model)
     await handler.handle_ws()

@@ -1,6 +1,7 @@
 -- Deploy projections
 -- requires: events
 -- requires: valueobjects
+-- requires: events_functions
 
 BEGIN;
 

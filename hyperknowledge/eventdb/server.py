@@ -5,17 +5,20 @@ from datetime import timedelta, datetime
 import logging
 
 from typing_extensions import TypedDict
-from pydantic import ConfigDict
+from pydantic import ConfigDict, BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.sql.functions import func
 from sqlalchemy.orm import joinedload
-from fastapi import FastAPI, HTTPException, Request, Depends, status, Response
+from fastapi import FastAPI, HTTPException, Request, Depends, status, Response, Query
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.websockets import WebSocket
+from fastapi.responses import HTMLResponse
 
-from .. import ClientSession, Session
+
+from .. import ClientSession, Session, production
 from . import PydanticURIRef
 from .context import Context
-from .auth import agent_session
+from .auth import agent_session, get_current_agent
 from .schemas import (
     LocalSourceModel, RemoteSourceModel, GenericEventModel, getEventModel, AgentModel, AgentModelWithPw, EventSchema, EventHandlerSchema, EventHandlerSchemas,
     models_from_schemas, HkSchema, getProjectionSchemas, EntityTopicSchema, AgentModelOptional)
@@ -23,7 +26,7 @@ from .models import (Source, Event, Struct, UUIDentifier, Term, Vocabulary, Topi
 from .make_tables import read_existing_projections, KNOWN_DB_MODELS, process_schema, db_to_projection
 from .auth import (
     authenticate_agent, create_access_token, Token, CurrentAgentType, CurrentActiveAgentType)
-from .processor import start_listen_thread, stop_listen_thread, forget_handler
+from .processor import start_listen_thread, stop_listen_thread, forget_handler, WebSocketDispatcher
 
 log = logging.getLogger()
 
@@ -467,3 +470,32 @@ async def add_handlers(handlers: EventHandlerSchemas, response: Response, curren
         await session.commit()
     response.status_code = status.HTTP_201_CREATED
     return [h.id for h in db_handlers]
+
+
+if not production:
+    with open("static/ws_test.html") as f:
+        web_test_html = f.read()
+
+    @app.get("/wstest")
+    async def get():
+        return HTMLResponse(web_test_html)
+
+
+@app.websocket("/ws")
+async def websocket(websocket: WebSocket):
+    await websocket.accept()
+    # Deciding to do the login within the WebSocket rather than use cookies.
+    token = await websocket.receive_text()
+    if token.split()[0].lower() in ("bearer", "login"):
+        token = token.split(' ', 1)[1]
+    try:
+        agent_model = await get_current_agent(token)
+        assert agent_model, "Invalid token"
+    except Exception as e:
+        print(e)
+        await websocket.send_text("Invalid login")
+        await websocket.close()
+        return
+    # await websocket.send_text(agent_model.model_dump_json())
+    handler = WebSocketDispatcher.dispatcher.add_socket(websocket, agent_model)
+    await handler.handle_ws()

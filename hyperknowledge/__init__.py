@@ -10,7 +10,13 @@ config = ConfigParser()
 config.read(Path(__file__).parent.parent.joinpath("config.ini"))
 production = os.environ.get("PRODUCTION", False)
 target_db = os.environ.get("TARGET_DB", "production" if production else "development")
-db_name = config.get(target_db, "database")
+
+
+def db_config_get(key: str):
+    return config.get(target_db, key)
+
+
+db_name = db_config_get("database")
 
 def engine_url(db=target_db, owner=True):
     user = 'owner' if owner else 'client'

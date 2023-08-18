@@ -8,15 +8,15 @@ import anyio
 from datetime import timezone
 from sqlalchemy import select, text
 from fastapi import HTTPException, Depends, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 
-from .. import config, target_db, Session, ClientSession
+from .. import Session, ClientSession, db_config_get
 from .schemas import (BaseModel, AgentModel, AgentModelWithPw)
 from .models import Agent
 
-SECRET_KEY = config.get(target_db, 'auth_secret')
+SECRET_KEY = db_config_get('auth_secret')
 ALGORITHM = "HS256"
 
 class Token(BaseModel):

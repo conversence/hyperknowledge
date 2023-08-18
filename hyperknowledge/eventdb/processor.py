@@ -2,31 +2,35 @@
 
 This happens on a thread, with attendant machinery.
 """
+from __future__ import annotations
+
 import asyncio
 from threading import Thread
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Iterable, Union, Tuple
+from collections import defaultdict
 from enum import Enum, IntEnum
 import logging
 from time import sleep
 import asyncio
 
 import anyio
+from anyio.from_thread import start_blocking_portal, BlockingPortal
 import asyncpg_listen
 from pydantic import Json, BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from sqlalchemy.orm import joinedload
 from sqlalchemy.sql.functions import func
 from py_mini_racer import MiniRacer
+from fastapi.websockets import WebSocket, WebSocketState
+from starlette.websockets import WebSocketDisconnect
 
-from hyperknowledge.eventdb.models import EventProcessor, Source
-
-from .. import target_db, config, make_scoped_session
+from .. import config, make_scoped_session, db_config_get, Session
 from . import dbTopicId
 from .models import (
     Base, EventProcessor, Event, Source, Term, Topic, EventHandler
 )
-from .schemas import getEventModel, HkSchema, getProjectionSchemas, ProjectionSchema, GenericEventModel
+from .schemas import getEventModel, HkSchema, getProjectionSchemas, ProjectionSchema, GenericEventModel, AgentModel
 from .make_tables import KNOWN_DB_MODELS, db_to_projection, projection_to_db
 
 log = logging.getLogger("processor")
@@ -34,6 +38,7 @@ log = logging.getLogger("processor")
 class QueuePosition(Enum):
     start = 'start'
     current = 'current'
+    last = 'last'
 
 
 class lifecycle(IntEnum):
@@ -56,7 +61,7 @@ class AbstractProcessorQueue():
         self.max_size = queue_size
         self.queue = asyncio.Queue(queue_size)
         self.in_process: Optional[Event] = None
-        self.last_processed: Optional[datetime] = None
+        self.last_processed: Optional[datetime] = proc.last_event_ts if proc else None
         self.last_fetched: Optional[datetime] = None
         self.last_seen: Optional[datetime] = None
         self.started = False
@@ -65,6 +70,7 @@ class AbstractProcessorQueue():
     def add_event(self, event: Event) -> None:
         if self.started and (self.last_fetched is None or self.last_fetched == self.last_seen) and not self.queue.full():
             self.queue.put_nowait(event)
+            self.last_fetched = event.created
         self.set_last_seen(event.created)
 
     def set_last_seen(self, event_ts: datetime) -> None:
@@ -81,7 +87,7 @@ class AbstractProcessorQueue():
                     self.last_processed = EventProcessor.last_event_ts
             event_query = select(Event).order_by(Event.created).limit(self.max_size - self.queue.qsize())
             if self.last_processed is not None:
-                event_query = event_query.filter(Event.created > self.last_processed).order_by(Event.created)
+                event_query = event_query.filter(Event.created > (self.last_fetched or self.last_processed)).order_by(Event.created)
             if self.source:
                 event_query = self.source.filter_event_query(event_query, session)
             events = await session.execute(event_query.options(
@@ -89,7 +95,7 @@ class AbstractProcessorQueue():
                 joinedload(Event.source),
                 joinedload(Event.creator)))
             for (event,) in events:
-                self.queue.put_nowait(event)
+                await self.queue.put(event)
                 self.last_fetched = event.created
             if self.last_seen is None and self.last_fetched is not None:
                 log.warning("Event happened in between")
@@ -150,7 +156,11 @@ class PushProcessorQueue(AbstractProcessorQueue):
                 await self.process_event(event, session)
                 await self.ack_event(event, session)
                 await session.commit()
+            self.after_event(event)
         self.status = lifecycle.cancelled
+
+    def after_event(self, deb_event: Event):
+        pass
 
     async def process_event(self, db_event: Event, session):
         pass
@@ -242,6 +252,9 @@ class ProjectionProcessor(PushProcessorQueue):
             updated_projection_by_role[handler.target_role] = new_projection.model_dump()
             # TODO: Make sure the projection type is in the topic
 
+    def after_event(self, db_event: Event):
+        WebSocketDispatcher.dispatcher.add_event(db_event)
+
 
 class Dispatcher(AbstractProcessorQueue, Thread):
     dispatcher = None
@@ -253,6 +266,7 @@ class Dispatcher(AbstractProcessorQueue, Thread):
         self.status = lifecycle.before
         self.active_processors: Dict[int, AbstractProcessorQueue] = {}
         self.projection_processor: ProjectionProcessor = None
+        self.websocket_processor: PushProcessorQueue = None
 
     def set_status(self, status: lifecycle):
         log.debug("Dispatcher status:", status)
@@ -265,7 +279,7 @@ class Dispatcher(AbstractProcessorQueue, Thread):
 
 
     def add_processor(self, proc: AbstractProcessorQueue):
-        assert self.status >= lifecycle.started
+        # assert self.status >= lifecycle.started
         assert proc.proc
         assert proc.proc.id not in self.active_processors
         self.active_processors[proc.proc.id] = proc
@@ -282,27 +296,32 @@ class Dispatcher(AbstractProcessorQueue, Thread):
         # TODO: Replace with the engine's connection, maybe?
         self.listener = asyncpg_listen.NotificationListener(
             asyncpg_listen.connect_func(
-                user=config.get(target_db, 'owner'),
-                password=config.get(target_db, 'owner_password'),
+                user=db_config_get('owner'),
+                password=db_config_get('owner_password'),
                 host=config.get('postgres', 'host'),
                 port=config.get('postgres', 'port'),
-                database=config.get(target_db, 'database')))
-        async with anyio.create_task_group() as tg:
-            self.tg = tg
-            self.session_maker = make_scoped_session(asyncio.current_task)
-            self.set_status(lifecycle.started)
-            await self.setup_projection_processor()
-            tg.start_soon(self.do_listen)
+                database=db_config_get('database')))
+        async with BlockingPortal() as portal:
+            self.portal = portal
+            async with anyio.create_task_group() as tg:
+                self.tg = tg
+                self.session_maker = make_scoped_session(asyncio.current_task)
+                self.set_status(lifecycle.started)
+                await self.setup_main_processors()
+                tg.start_soon(self.do_listen)
 
         self.set_status(lifecycle.cancelled)
 
 
-    async def setup_projection_processor(self):
+    async def setup_main_processors(self):
         async with self.session_maker() as session:
             projection_processor = await session.get(EventProcessor, 0)
             await session.refresh(projection_processor, ['source'])
         self.projection_processor = ProjectionProcessor(projection_processor)
         self.tg.start_soon(self.projection_processor.start_processor, self.tg, self.session_maker)
+        self.websocket_processor = WebSocketDispatcher()
+        self.tg.start_soon(self.websocket_processor.start_processor, self.tg, self.session_maker)
+        self.last_processed = self.projection_processor.last_processed
 
     async def do_listen(self):
         await self.listener.run(
@@ -316,6 +335,8 @@ class Dispatcher(AbstractProcessorQueue, Thread):
         assert self.status >= lifecycle.started
         was_active = self.status == lifecycle.active
         self.set_status(lifecycle.cancelling)
+        self.websocket_processor.stop_processor()
+        self.projection_processor.stop_processor()
         if was_active:
             sleep(0.1)
         self.tg.cancel_scope.cancel()
@@ -332,12 +353,203 @@ class Dispatcher(AbstractProcessorQueue, Thread):
             event = await self.get_event()
             # Do the projections first
             self.projection_processor.add_event(event)
-            # Find a way to wait until the processing is done!
-            # Then dispatch to other processors
+            # TODO: Maybe the post-projection processor should be a separate dispatcher instead of just the websocket dispatcher?
             for processor in self.active_processors.values():
                 await processor.add_event(event)
             await self.ack_event(event)
         self.set_status(lifecycle.started)
+
+
+class WebSocketDispatcher(PushProcessorQueue):
+    """This dispatches events to all websocket clients"""
+    dispatcher: WebSocketDispatcher = None
+
+    def __init__(self) -> None:
+        super(WebSocketDispatcher, self).__init__()
+        assert not WebSocketDispatcher.dispatcher, "Singleton"
+        self.sockets: Dict[str, WebSocketHandler] = {}
+        self.by_source: Dict[int, Dict[Tuple[int, str], WebSocketProcessor]] = defaultdict(dict)
+        WebSocketDispatcher.dispatcher = self
+
+    def add_socket(self, socket: WebSocket, agent: AgentModel):
+        handler = WebSocketHandler(socket, agent)
+        self.sockets[handler.name] = handler
+        return handler
+
+    def close_socket(self, handler: WebSocketHandler):
+        for proc in handler.processors.values():
+            self.remove_ws_processor(proc)
+        del self.sockets[handler.name]
+
+    async def fetch_events(self):
+        # The dispatcher should not fetch events on its own
+        self.started = True
+
+    def add_ws_processor(self, wproc: WebSocketProcessor):
+        for source_id in wproc.source_set:
+            assert not self.by_source[source_id].get((wproc.proc.owner_id, wproc.proc.name)), "Do not listen to a single processor from two sockets"
+            self.by_source[source_id][(wproc.proc.owner_id, wproc.proc.name)] = wproc
+        self.tg.start_soon(wproc.start_processor, self.tg, self.session_maker)
+
+    def remove_ws_processor(self, wproc: WebSocketProcessor):
+        for source_id in wproc.source_set:
+            wproc = self.by_source[source_id].pop((wproc.proc.owner_id, wproc.proc.name))
+        wproc.stop_processor()
+
+    async def process_event(self, event: Event, session=None):
+        #TODO multisource
+        sources = [event.source_id]
+        for source_id in sources:
+            for processor in self.by_source[source_id].values():
+                processor.add_event(event)
+
+
+class WebSocketProcessor(PushProcessorQueue):
+    """Processors keep track of position in the event stream for each source.
+    This processor sends events to a websocket connection as they are made available."""
+    def __init__(self, socket: WebSocket, proc: EventProcessor, source_set:Iterable[int]):
+        super(WebSocketProcessor, self).__init__(proc=proc)
+        self.socket = socket
+        self.proc = proc
+        self.source_set = source_set
+
+    async def process_event(self, event: Event, session):
+        ev_class = getEventModel()
+        event_data = ev_class.model_validate(event)
+        # What about context?
+        # Here we're on the processor thread, ideally we'd want this to run in main event loop that has the actual socket
+        # main_portal.start_task_soon(self.socket.send_text, event_data.model_dump_json())
+        await self.socket.send_text(event_data.model_dump_json())
+
+    # async def fetch_events(self):
+    #     # Big problem: Which past events have been processed?
+    #     # Temporary disable for debugging
+    #     self.started = True
+    #     return
+
+class WebSocketHandler():
+    """Handles a single websocket connection and the associated processors"""
+    def __init__(self, socket: WebSocket, agent: AgentModel):
+        self.socket = socket
+        self.name = socket._headers['sec-websocket-key']
+        self.agent = agent
+        self.processors: Dict[str, WebSocketProcessor] = {}
+
+    @staticmethod
+    def set_start_time(proc: EventProcessor, start_time: Union[QueuePosition, datetime]=QueuePosition.current):
+        if start_time == QueuePosition.current:
+            return
+        elif start_time == QueuePosition.last:
+            proc.last_event_ts = datetime.utcnow()
+        elif start_time == QueuePosition.start:
+            proc.last_event_ts = None
+        else:
+            proc.last_event_ts = start_time
+
+
+    async def listen(self, source_name: str, proc_name: Optional[str]=None, start_time:Union[QueuePosition, datetime]=QueuePosition.current) -> WebSocketProcessor:
+        proc_name = proc_name or source_name
+        if proc_name in self.processors:
+            return
+        async with Session() as session:
+            r = await session.execute(
+                select(EventProcessor).filter_by(owner_id=self.agent.id, name=proc_name)
+                .join(Source).filter_by(local_name=source_name).options(joinedload(EventProcessor.source)))
+            if r := r.first():
+                (processor,) = r
+            else:
+                source = await session.execute(select(Source).filter_by(local_name=source_name))
+                source = source.first()
+                if not source:
+                    raise RuntimeError(f"No such source {source_name}")
+                (source,) = source
+                processor = EventProcessor(source=source, owner_id=self.agent.id, name=proc_name)
+                session.add(processor)
+            self.set_start_time(processor, start_time)
+            # TODO
+            source_set = {processor.source.id}
+            await session.commit()
+        wproc = WebSocketProcessor(self.socket, processor, source_set)
+        self.processors[proc_name] = wproc
+        # We're in the main thread; we want to run in the processor thread
+        Dispatcher.dispatcher.portal.start_task_soon(WebSocketDispatcher.dispatcher.add_ws_processor, wproc)
+        return wproc
+
+    async def mute(self, proc_name: str):
+        proc = self.processors.pop(proc_name)
+        assert proc
+        WebSocketDispatcher.dispatcher.remove_ws_processor(proc)
+
+    async def delete_processor(self, proc_name: str):
+        await self.mute(proc_name)
+        async with Session() as session:
+            r = await session.execute(
+                delete(EventProcessor).where(owner_id=self.agent.id, name=proc_name))
+            session.commit()
+
+    async def handle_ws(self):
+        alive = True
+        ws = self.socket
+        try:
+            while alive:
+                cmd = await ws.receive_text()
+                cmd = cmd.strip()
+                if not cmd:
+                    continue
+                cmd = cmd.split()
+                base_cmd = cmd.pop(0).lower()
+                if base_cmd == 'listen':
+                    if not (1 <= len(cmd) <= 3):
+                        await ws.send_text("Format: Listen source_name (proc_name) (start_time)")
+                        continue
+                    if len(cmd) == 3 and cmd[2] not in QueuePosition._member_map_:
+                        try:
+                            cmd[2] = datetime.fromisoformat(cmd[2])
+                        except ValueError:
+                            await ws.send_text(f"Invalid start_time: Must be a iso-formatted date or in {QueuePosition._member_names_}.")
+                            continue
+                    try:
+                        await self.listen(*cmd)
+                        await ws.send_text(f"Listening to {cmd[1] if len(cmd) > 1 else cmd[0]}")
+                    except AssertionError:
+                        await ws.send_text(f"No such source {cmd[0]}")
+                elif base_cmd == 'mute':
+                    if len(cmd) != 1:
+                        await ws.send_text("Format: Mute proc_name")
+                        continue
+                    try:
+                        await self.mute(cmd[0])
+                        await ws.send_text(f"Muted {cmd[0]}")
+                    except KeyError:
+                        await ws.send_text(f"No such processor {cmd[0]}")
+                elif base_cmd == 'delete':
+                    if len(cmd) != 1:
+                        await ws.send_text("Format: Mute proc_name")
+                        continue
+                    try:
+                        await self.delete(cmd[0])
+                        await ws.send_text(f"Deleted {cmd[0]}")
+                    except KeyError:
+                        await ws.send_text(f"No such processor {cmd[0]}")
+                elif base_cmd == 'close':
+                    if len(cmd):
+                        await ws.send_text("Format: Close")
+                        continue
+                    alive = False
+                else:
+                    await ws.send_text("Unknown command")
+        except WebSocketDisconnect:
+            pass
+        finally:
+            exc = None
+            if ws.client_state != WebSocketState.DISCONNECTED:
+                try:
+                    await ws.close()
+                except Exception as e:
+                    exc = e
+            WebSocketDispatcher.dispatcher.close_socket(self)
+            if exc is not None:
+                raise exc
 
 
 def start_listen_thread():

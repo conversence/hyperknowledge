@@ -196,6 +196,67 @@ class AgentModelWithPw(AgentModel):
 
 AgentModelOptional = to_optional(AgentModelWithPw)
 
+class AgentSourcePermissionModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    agent: str
+    source: PydanticURIRef
+    is_admin: bool = False
+    allow_read: bool = False
+    allow_write: bool = False
+    allow_all_write: bool = False
+    is_request: bool = False
+
+    @field_validator('source', mode='before')
+    @classmethod
+    def add_source(cls, source, info):
+        if isinstance(source, DeclarativeBase):
+            return PydanticURIRef(source.uri)
+        return PydanticURIRef(source) if source else None
+
+    @field_validator('agent', mode='before')
+    @classmethod
+    def add_creator(cls, agent, info):
+        if isinstance(agent, DeclarativeBase):
+            return agent.username
+        return agent
+
+AgentSourcePermissionModelOptional = to_optional(AgentSourcePermissionModel)
+
+class AgentSourceSelectivePermissionModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    agent: str
+    source: PydanticURIRef
+    event_type: PydanticURIRef
+    is_request: bool = False
+
+    @field_validator('source', mode='before')
+    @classmethod
+    def add_source(cls, source, info):
+        if isinstance(source, DeclarativeBase):
+            return PydanticURIRef(source.uri)
+        return PydanticURIRef(source) if source else None
+
+    @field_validator('event_type', mode='before')
+    @classmethod
+    def add_event_type(cls, event_type, info):
+        if isinstance(event_type, DeclarativeBase):
+            return PydanticURIRef(event_type.uri)
+        return PydanticURIRef(event_type) if event_type else None
+
+    @field_validator('agent', mode='before')
+    @classmethod
+    def add_creator(cls, agent, info):
+        if isinstance(agent, DeclarativeBase):
+            return agent.username
+        return agent
+
+class AgentSourceSelectivePermissionModelOptional(AgentSourceSelectivePermissionModel):
+    # event_type should not be optional, as it distinguishes the types
+    agent: Optional[str] = None
+    source: Optional[PydanticURIRef] = None
+
 
 HkSchema.model_rebuild()
 

@@ -3,11 +3,12 @@ from typing import List, Dict, Annotated, Tuple, Union, Optional
 from contextlib import asynccontextmanager
 from datetime import timedelta, datetime
 from json import JSONDecodeError
+from itertools import chain
 import logging
 
 from typing_extensions import TypedDict
 from pydantic import ConfigDict, BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import select, text, delete
 from sqlalchemy.sql.functions import func
 from sqlalchemy.orm import joinedload
 from fastapi import FastAPI, HTTPException, Request, Depends, status, Response, Query
@@ -23,8 +24,9 @@ from .context import Context
 from .auth import agent_session, get_current_agent
 from .schemas import (
     LocalSourceModel, RemoteSourceModel, GenericEventModel, getEventModel, AgentModel, AgentModelWithPw, EventSchema, EventHandlerSchema, EventHandlerSchemas,
-    models_from_schemas, HkSchema, getProjectionSchemas, EntityTopicSchema, AgentModelOptional)
-from .models import (Source, Event, Struct, UUIDentifier, Term, Vocabulary, Topic, EventHandler, Agent, schema_defines_table)
+    models_from_schemas, HkSchema, getProjectionSchemas, EntityTopicSchema, AgentModelOptional,
+    AgentSourceSelectivePermissionModel, AgentSourcePermissionModel, AgentSourceSelectivePermissionModelOptional, AgentSourcePermissionModelOptional)
+from .models import (Source, Event, Struct, UUIDentifier, Term, Vocabulary, Topic, EventHandler, Agent, AgentSourceSelectivePermission, AgentSourcePermission, schema_defines_table)
 from .make_tables import read_existing_projections, KNOWN_DB_MODELS, process_schema, db_to_projection
 from .auth import (
     authenticate_agent, create_access_token, Token, CurrentAgentType, CurrentActiveAgentType)
@@ -188,6 +190,17 @@ async def add_agent(model: AgentModelWithPw, response: Response, current_agent: 
         # location is not public
 
 
+@app.get("/agents")
+async def get_agents(current_agent: CurrentActiveAgentType) -> List[AgentModel]:
+    print('get_agents')
+    if not current_agent.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    async with agent_session(current_agent) as session:
+        r = await session.execute(select(Agent))
+        print(r)
+        return [AgentModel.model_validate(x) for (x,) in r]
+
+
 @app.patch("/agents/{username}")
 async def patch_agent(
         model: AgentModelOptional, username: str, response: Response,
@@ -258,6 +271,162 @@ async def add_local_source(
         await session.commit()
         response.status_code = status.HTTP_201_CREATED
         response.headers["Location"] = f"/source/{source.local_name}"
+
+
+@app.get("/source/{source_name}/permission")
+async def get_local_source_permissions(source_name: str, current_agent: CurrentActiveAgentType) -> List[Union[AgentSourceSelectivePermissionModel, AgentSourcePermissionModel]]:
+    async with agent_session(current_agent) as session:
+        r = await session.execute(select(Source).filter_by(local_name=source_name))
+        r = r.first()
+        if not r:
+            raise HTTPException(status_code=404, detail="Source does not exist")
+        source: Source = r[0]
+        q = select(AgentSourcePermission).filter_by(source_id=source.id).options(
+            joinedload(AgentSourcePermission.agent),
+            joinedload(AgentSourcePermission.source))
+        if source.creator_id != current_agent.id:
+            q = q.filter_by(agent_id=current_agent.id)
+        asps = await session.execute(q)
+        asps = [AgentSourcePermissionModel.model_validate(asp) for (asp,) in asps]
+        q = select(AgentSourceSelectivePermission).filter_by(source_id=source.id).options(
+            joinedload(AgentSourceSelectivePermission.agent),
+            joinedload(AgentSourceSelectivePermission.source),
+            joinedload(AgentSourceSelectivePermission.event_type))
+        if source.creator_id != current_agent.id:
+            q = q.filter_by(agent_id=current_agent.id)
+        assps = await session.execute(q)
+        assps = [AgentSourceSelectivePermissionModel.model_validate(assp) for (assp,) in assps]
+        return chain(asps, assps)
+
+
+@app.post("/source/{source_name}/permission")
+async def add_local_source_permissions(
+        source_name: str, permission: Union[AgentSourceSelectivePermissionModelOptional, AgentSourcePermissionModelOptional], current_agent: CurrentActiveAgentType, request: Request, response: Response
+        ) -> Union[AgentSourceSelectivePermissionModel, AgentSourcePermissionModel]:
+    permission_uri = PydanticURIRef(f"{request.base_url}/source/{source_name}")
+    if permission.source and permission.source != permission_uri:
+        raise HTTPException(status_code=404, detail="Posting on the wrong source")
+    permission.source = permission_uri
+    async with agent_session(current_agent) as session:
+        r = await session.execute(select(Source).filter_by(local_name=source_name))
+        r = r.first()
+        if not r:
+            raise HTTPException(status_code=404, detail="Source does not exist")
+        source: Source = r[0]
+        if permission.agent and permission.agent != current_agent.username:
+            r = await session.execute(select(Agent).filter_by(username=permission.agent))
+            r = r.first()
+            if not r:
+                raise HTTPException(status_code=404, detail="Agent does not exist")
+            agent: Agent = r[0]
+        else:
+            agent = current_agent
+            permission.agent = current_agent.username
+        args = permission.model_dump()
+        args.update(dict(source=source, agent=agent))
+        if getattr(permission, "event_type", None):
+            event_type = await Term.get_by_uri(session, permission.event_type)
+            if not event_type:
+                raise HTTPException(status_code=404, detail="event_type does not exist")
+            args[event_type] = event_type
+            model = AgentSourceSelectivePermission
+        else:
+            model = AgentSourcePermission
+        permissionOb = model(**args)
+        # TODO: check permissions here for better error messages
+        session.add(permissionOb)
+        await session.commit()
+    response.status_code = status.HTTP_201_CREATED
+    return permission.__class__.model_validate(permissionOb)
+
+
+@app.patch("/source/{source_name}/permission")
+async def update_local_source_permissions(
+        source_name: str, permission: Union[AgentSourceSelectivePermissionModelOptional, AgentSourcePermissionModelOptional], current_agent: CurrentActiveAgentType, request: Request
+        ) -> Union[AgentSourceSelectivePermissionModel, AgentSourcePermissionModel]:
+    permission_uri = PydanticURIRef(f"{request.base_url}/source/{source_name}")
+    if permission.source and permission.source != permission_uri:
+        raise HTTPException(status_code=404, detail="Posting on the wrong source")
+    permission.source = permission_uri
+    async with agent_session(current_agent) as session:
+        r = await session.execute(select(Source).filter_by(local_name=source_name))
+        r = r.first()
+        if not r:
+            raise HTTPException(status_code=404, detail="Source does not exist")
+        source: Source = r[0]
+        if permission.agent and permission.agent != current_agent.username:
+            r = await session.execute(select(Agent).filter_by(username=permission.agent))
+            r = r.first()
+            if not r:
+                raise HTTPException(status_code=404, detail="Agent does not exist")
+            agent: Agent = r[0]
+        else:
+            agent = current_agent
+            permission.agent = current_agent.username
+        if getattr(permission, "event_type", None):
+            event_type = await Term.get_by_uri(session, permission.event_type)
+            if not event_type:
+                raise HTTPException(status_code=404, detail="event_type does not exist")
+
+            r = await session.execute(select(AgentSourceSelectivePermission).filter_by(source=source, agent=agent, event_type=event_type))
+            r = r.first()
+            if not r:
+                raise HTTPException(status_code=404, detail="Permission does not exist")
+            permissionOb = r[0]
+            permissionOb.source = source
+            permissionOb.agent = agent
+            permissionOb.event_type = event_type
+        else:
+            r = await session.execute(select(AgentSourcePermission).filter_by(source=source, agent=agent))
+            r = r.first()
+            if not r:
+                raise HTTPException(status_code=404, detail="Permission does not exist")
+            permissionOb = r[0]
+            permissionOb.source = source
+            permissionOb.agent = agent
+
+        args = permission.model_dump()
+        args.pop('source')
+        args.pop('agent')
+        args.pop('event_type', None)
+        for k, v in args.items():
+            if v is not None:
+                setattr(permissionOb, k, v)
+        # TODO: check permissions here for better error messages
+        await session.commit()
+        return permission.__class__.model_validate(permissionOb)
+
+@app.delete("/source/{source_name}/permission")
+async def delete_local_source_permissions(
+        source_name: str, permission: Union[AgentSourceSelectivePermissionModelOptional, AgentSourcePermissionModelOptional], current_agent: CurrentActiveAgentType, request: Request):
+    permission_uri = PydanticURIRef(f"{request.base_url}/source/{source_name}")
+    if permission.source and permission.source != permission_uri:
+        raise HTTPException(status_code=404, detail="Posting on the wrong source")
+    permission.source = permission_uri
+    async with agent_session(current_agent) as session:
+        r = await session.execute(select(Source).filter_by(local_name=source_name))
+        r = r.first()
+        if not r:
+            raise HTTPException(status_code=404, detail="Source does not exist")
+        source: Source = r[0]
+        if permission.agent and permission.agent != current_agent.username:
+            r = await session.execute(select(Agent).filter_by(username=permission.agent))
+            r = r.first()
+            if not r:
+                raise HTTPException(status_code=404, detail="Agent does not exist")
+            agent: Agent = r[0]
+        else:
+            agent = current_agent
+            permission.agent = current_agent.username
+        if getattr(permission, "event_type", None):
+            event_type = await Term.get_by_uri(session, permission.event_type)
+            if not event_type:
+                raise HTTPException(status_code=404, detail="event_type does not exist")
+
+            await session.execute(delete(AgentSourceSelectivePermission).filter(AgentSourceSelectivePermission.source_id==source.id, AgentSourceSelectivePermission.agent_id==agent.id, AgentSourceSelectivePermission.event_type_id==event_type.id))
+        else:
+            await session.execute(delete(AgentSourcePermission).filter(AgentSourcePermission.source_id==source.id, AgentSourcePermission.agent_id==agent.id))
+        await session.commit()
 
 
 @app.post("/schema")

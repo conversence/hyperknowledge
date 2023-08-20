@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS agent_source_permission (
   allow_read boolean DEFAULT false,
   allow_write boolean DEFAULT false,
   allow_all_write boolean DEFAULT false,
+  is_request BOOLEAN DEFAULT false,
 
   CONSTRAINT agent_source_permission_pkey PRIMARY KEY (agent_id, source_id),
   CONSTRAINT agent_source_permission_agent_fkey FOREIGN KEY (agent_id)
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS agent_source_selective_permission (
   agent_id BIGINT NOT NULL,
   source_id BIGINT NOT NULL,
   event_type_id BIGINT NOT NULL,
+  is_request BOOLEAN DEFAULT false,
 
   CONSTRAINT agent_source_selective_permission_pkey PRIMARY KEY (agent_id, source_id, event_type_id),
   CONSTRAINT agent_source_selective_permission_agent_fkey FOREIGN KEY (agent_id)

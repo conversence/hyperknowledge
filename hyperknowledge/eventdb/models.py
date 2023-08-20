@@ -392,6 +392,7 @@ class AgentSourcePermission(Base):
     allow_read: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
     allow_write: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
     allow_all_write: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
+    is_request: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
 
     agent: Mapped[Agent] = relationship(Agent, back_populates="source_permissions")
     source: Mapped[Source] = relationship(Source)
@@ -402,6 +403,7 @@ class AgentSourceSelectivePermission(Base):
     agent_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Agent.id), primary_key=True)
     source_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Source.id), primary_key=True)
     event_type_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Term.id), primary_key=True)
+    is_request: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
 
     agent: Mapped[Agent] = relationship(Agent, back_populates="source_selective_permissions")
     source: Mapped[Source] = relationship(Source)

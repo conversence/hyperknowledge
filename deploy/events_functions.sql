@@ -76,14 +76,14 @@ CREATE TRIGGER after_create_event AFTER INSERT ON public.event FOR EACH ROW EXEC
 
 CREATE OR REPLACE VIEW agent_source_my_permissions AS
     SELECT source_id, is_admin, allow_read, allow_write, allow_all_write
-    FROM public.agent_source_permission WHERE agent_id=current_agent_id();
+    FROM public.agent_source_permission WHERE agent_id=current_agent_id() AND NOT is_request;
 
 GRANT SELECT ON agent_source_my_permissions TO :dbm;
 GRANT SELECT ON agent_source_my_permissions TO :dbc;
 
 CREATE OR REPLACE VIEW agent_source_my_selective_permissions AS
     SELECT source_id, event_type_id
-    FROM public.agent_source_selective_permission WHERE agent_id=current_agent_id();
+    FROM public.agent_source_selective_permission WHERE agent_id=current_agent_id() AND NOT is_request;
 
 GRANT SELECT ON agent_source_my_selective_permissions TO :dbm;
 GRANT SELECT ON agent_source_my_selective_permissions TO :dbc;
@@ -145,15 +145,15 @@ ALTER TABLE public.agent_source_permission ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS agent_source_permission_delete_policy ON public.agent_source_permission;
 CREATE POLICY agent_source_permission_delete_policy ON public.agent_source_permission FOR DELETE USING (
-    is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_permission.source_id));
+    agent_id = current_agent_id() OR is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_permission.source_id));
 
 DROP POLICY IF EXISTS agent_source_permission_update_policy ON public.agent_source_permission;
 CREATE POLICY agent_source_permission_update_policy ON public.agent_source_permission FOR UPDATE USING (
-    is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_permission.source_id));
+    is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_permission.source_id) OR (agent_id = current_agent_id() AND is_request= TRUE));
 
 DROP POLICY IF EXISTS agent_source_permission_insert_policy ON public.agent_source_permission;
 CREATE POLICY agent_source_permission_insert_policy ON public.agent_source_permission FOR INSERT WITH CHECK (
-    is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_permission.source_id));
+    is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_permission.source_id) OR (agent_id = current_agent_id() AND is_request=TRUE));
 -- Bootstrap problem, requires permission elevation in after_create_source
 
 DROP POLICY IF EXISTS agent_source_permission_select_policy ON public.agent_source_permission;
@@ -165,15 +165,15 @@ ALTER TABLE public.agent_source_selective_permission ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS agent_source_selective_permission_delete_policy ON public.agent_source_selective_permission;
 CREATE POLICY agent_source_selective_permission_delete_policy ON public.agent_source_selective_permission FOR DELETE USING (
-    is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_selective_permission.source_id));
+    agent_id = current_agent_id() OR is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_selective_permission.source_id));
 
 DROP POLICY IF EXISTS agent_source_selective_permission_update_policy ON public.agent_source_selective_permission;
 CREATE POLICY agent_source_selective_permission_update_policy ON public.agent_source_selective_permission FOR UPDATE USING (
-    is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_selective_permission.source_id));
+    is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_selective_permission.source_id) OR (agent_id = current_agent_id() AND is_request= TRUE));
 
 DROP POLICY IF EXISTS agent_source_selective_permission_insert_policy ON public.agent_source_selective_permission;
 CREATE POLICY agent_source_selective_permission_insert_policy ON public.agent_source_selective_permission FOR INSERT WITH CHECK (
-    is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_selective_permission.source_id));
+    is_superadmin() OR (SELECT is_admin FROM agent_source_my_permissions p WHERE p.source_id = agent_source_selective_permission.source_id) OR (agent_id = current_agent_id() AND is_request= TRUE));
 
 DROP POLICY IF EXISTS agent_source_selective_permission_select_policy ON public.agent_source_selective_permission;
 CREATE POLICY agent_source_selective_permission_select_policy ON public.agent_source_selective_permission FOR SELECT USING (

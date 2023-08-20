@@ -1,6 +1,8 @@
-import pytest
 from asyncio import sleep
 
+import pytest
+from httpx import AsyncClient
+from httpx_ws import aconnect_ws
 from fastapi.security import OAuth2PasswordRequestForm
 
 pytestmark = pytest.mark.anyio
@@ -89,3 +91,25 @@ async def test_dependent_source(client, loaded_handlers, quidam_token, quidam_te
     assert response.status_code == 200, response.json()
     result = response.json()
     assert result["@id"] == doc_id
+
+async def test_subscriptions(client: AsyncClient, loaded_handlers, quidam_token, quidam_test_source):
+    from hyperknowledge.eventdb.schemas import GenericEventModel
+    headers = dict(Authorization=f"Bearer {quidam_token}")
+    async with aconnect_ws("http://test/ws", client) as ws:
+        await ws.send_json(dict(token=quidam_token))
+        data = await ws.receive_json()
+        assert data['login']
+        await ws.send_json(dict(cmd='listen', source='test'))
+        data = await ws.receive_json()
+        assert data['listen'] == 'test'
+
+        # Post the event
+        event = GenericEventModel(data={
+            "@type": "ex:create_document",
+            "title": {"@value": "A title", "@lang": "en"},
+            "url": "http://example.com/doc0"})
+        response = await client.post(f"/source/{quidam_test_source.local_name}/events", json=event.model_dump(), headers=headers)
+        assert response.status_code == 201, response.json()
+
+        data = await ws.receive_json()
+        assert data['data']['@type'] == 'ex:create_document'

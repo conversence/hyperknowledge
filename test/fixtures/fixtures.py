@@ -1,6 +1,7 @@
 import os
 from typing import Dict, Iterator
 from httpx import AsyncClient
+from httpx_ws.transport import ASGIWebSocketTransport
 from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 
@@ -77,7 +78,8 @@ def app(init_database) -> FastAPI:
 @pytest.fixture(scope="module")
 async def client(app) -> Iterator[AsyncClient]:
     async with LifespanManager(app):
-        async with AsyncClient(app=app, base_url="http://test") as ac:
+        async with AsyncClient(
+                app=app, base_url="http://test", transport=ASGIWebSocketTransport(app)) as ac:
             yield ac
 
 

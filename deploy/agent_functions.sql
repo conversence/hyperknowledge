@@ -15,7 +15,6 @@ BEGIN;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.agent TO :dbm;
 GRANT SELECT, INSERT ON TABLE public.agent TO :dbc;
--- TODO: Row permissions
 
 -- REVOKE SELECT ON TABLE public.agent FROM :dbc;
 -- GRANT SELECT (id, username, username) ON TABLE public.agent TO :dbc;

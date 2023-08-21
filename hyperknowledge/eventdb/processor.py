@@ -340,8 +340,6 @@ class Dispatcher(AbstractProcessorQueue, Thread):
         self.projection_processor.stop_processor()
         if was_active:
             sleep(0.1)
-        if self.session_maker:
-            self.tg.start_soon(self.session_maker.close_all)
         self.tg.cancel_scope.cancel()
         self.set_status(lifecycle.cancelled)
 

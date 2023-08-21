@@ -122,7 +122,7 @@ class AbstractProcessorQueue():
         if session is None and self.proc:
             async with self.session_maker() as session:
                 await self.ack_event(event, session)
-                session.commit()
+                await session.commit()
                 return
         assert event == self.in_process
         last_timestamp = event.created
@@ -133,6 +133,11 @@ class AbstractProcessorQueue():
                 update(EventProcessor).where(EventProcessor.id==self.proc.id).values(last_event_ts=last_timestamp))
         self.queue.task_done()
         self.in_process = None
+
+    async def ack_event_by_time(self, event_time: Optional[datetime] = None):
+        if event_time:
+            assert event_time == self.in_process.created
+        await self.ack_event(self.in_process)
 
     def start_processor(self, tg: anyio.abc.TaskGroup, session_maker):
         self.tg = tg
@@ -146,19 +151,39 @@ class AbstractProcessorQueue():
 
 class PushProcessorQueue(AbstractProcessorQueue):
 
+    def __init__(self, proc: EventProcessor = None, queue_size=10, autoack=True) -> None:
+        super().__init__(proc, queue_size)
+        self.autoack = autoack
+        self.ack_wait_event = None
+
     async def start_processor(self, tg: anyio.abc.TaskGroup, session_maker):
         super(PushProcessorQueue, self).start_processor(tg, session_maker)
         tg.start_soon(self.run)
+
+    async def ack_event(self, event: Event, session=None):
+        await super().ack_event(event, session)
+        if session is not None and not self.autoack:
+            self.ack_wait_event.set()
 
     async def run(self):
         while self.status < lifecycle.cancelling and not self.tg.cancel_scope.cancel_called:
             event = await self.get_event()
             async with self.session_maker() as session:
                 await self.process_event(event, session)
-                await self.ack_event(event, session)
-                await session.commit()
+                if self.autoack:
+                    await self.ack_event(event, session)
+                    await session.commit()
+                else:
+                    await session.commit()
+                    await self.ack_wait_event.wait()
             self.after_event(event)
         self.status = lifecycle.cancelled
+
+    async def get_event(self) -> Event:
+        event = await super().get_event()
+        if not self.autoack:
+            self.ack_wait_event = anyio.Event()
+        return event
 
     def after_event(self, deb_event: Event):
         pass
@@ -413,8 +438,8 @@ class WebSocketDispatcher(PushProcessorQueue):
 class WebSocketProcessor(PushProcessorQueue):
     """Processors keep track of position in the event stream for each source.
     This processor sends events to a websocket connection as they are made available."""
-    def __init__(self, socket: WebSocket, proc: EventProcessor, source_set:Iterable[int]):
-        super(WebSocketProcessor, self).__init__(proc=proc)
+    def __init__(self, socket: WebSocket, proc: EventProcessor, source_set:Iterable[int], autoack=True):
+        super(WebSocketProcessor, self).__init__(proc=proc, autoack=autoack)
         self.socket = socket
         self.proc = proc
         self.source_set = source_set
@@ -453,7 +478,7 @@ class WebSocketHandler():
             proc.last_event_ts = start_time
 
 
-    async def listen(self, source_name: str, proc_name: Optional[str]=None, start_time:Union[QueuePosition, datetime]=QueuePosition.current) -> WebSocketProcessor:
+    async def listen(self, source_name: str, proc_name: Optional[str]=None, start_time:Union[QueuePosition, datetime]=QueuePosition.current, autoack=True) -> WebSocketProcessor:
         assert proc_name or source_name
         if proc_name in self.processors:
             return
@@ -481,7 +506,7 @@ class WebSocketHandler():
             # TODO
             source_set = {processor.source.id}
             await session.commit()
-        wproc = WebSocketProcessor(self.socket, processor, source_set)
+        wproc = WebSocketProcessor(self.socket, processor, source_set, autoack=autoack)
         self.processors[proc_name] = wproc
         # We're in the main thread; we want to run in the processor thread
         Dispatcher.dispatcher.portal.start_task_soon(WebSocketDispatcher.dispatcher.add_ws_processor, wproc)
@@ -504,6 +529,19 @@ class WebSocketHandler():
             await self.mute(proc_name)
         self.socket.close()
 
+    async def ack_event(self, proc_name: str, event_time: Optional[datetime] = None) -> datetime:
+        # We're in the main thread; we want to run in the processor thread
+        processor = self.processors[proc_name]
+        assert not processor.autoack
+        current_event = processor.in_process
+        assert current_event
+        Dispatcher.dispatcher.portal.start_task_soon(self.ack_event_2, processor, event_time or current_event.created)
+        return current_event.created
+
+    async def ack_event_2(self, processor: EventProcessor, event_time: Optional[datetime]):
+        assert not processor.autoack
+        await processor.ack_event_by_time(event_time)
+
     async def handle_ws(self):
         alive = True
         ws = self.socket
@@ -521,6 +559,7 @@ class WebSocketHandler():
                 if base_cmd == 'listen':
                     source = cmd_data.get('source')
                     processor = cmd_data.get('processor')
+                    autoack = cmd_data.get('autoack', True)
                     if not (source or processor):
                         await ws.send_json(dict(error="Include source or processor"))
                     start_time = cmd_data.get('start') or "current"
@@ -533,8 +572,8 @@ class WebSocketHandler():
                             await ws.send_json(dict(error=f"Invalid start_time: Must be a iso-formatted date or in {QueuePosition._member_names_}."))
                             continue
                     try:
-                        await self.listen(source, processor, start_time)
-                        await ws.send_json(dict(listen=processor or source))
+                        await self.listen(source, processor, start_time, autoack=autoack)
+                        await ws.send_json(dict(listen=processor or source, autoack=autoack))
                     except AssertionError:
                         if source:
                             await ws.send_json(dict(error=f"No such source {source}"))
@@ -558,6 +597,22 @@ class WebSocketHandler():
                     try:
                         await self.delete(processor)
                         await ws.send_json(dict(delete=processor))
+                    except KeyError:
+                        await ws.send_json(dict(error=f"No such processor {processor}"))
+                elif base_cmd == 'ack':
+                    processor = cmd_data.get('processor')
+                    if not processor:
+                        await ws.send_json(dict(error="Specify processor"))
+                        continue
+                    if event_time := cmd_data.get('event_time', None):
+                        try:
+                            event_time = datetime.fromisoformat(event_time)
+                        except ValueError:
+                            await ws.send_json(dict(error="Invalid event_time: Must be a iso-formatted date"))
+                            continue
+                    try:
+                        ev_time = await self.ack_event(processor, event_time)
+                        await ws.send_json(dict(ack=ev_time.isoformat()))
                     except KeyError:
                         await ws.send_json(dict(error=f"No such processor {processor}"))
                 elif base_cmd == 'close':

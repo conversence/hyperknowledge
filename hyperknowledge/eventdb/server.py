@@ -29,7 +29,7 @@ from .schemas import (
 from .models import (Source, Event, Struct, UUIDentifier, Term, Vocabulary, Topic, EventHandler, Agent, AgentSourceSelectivePermission, AgentSourcePermission, schema_defines_table)
 from .make_tables import read_existing_projections, KNOWN_DB_MODELS, process_schema, db_to_projection
 from .auth import (
-    authenticate_agent, create_access_token, Token, CurrentAgentType, CurrentActiveAgentType)
+    get_token, Token, CurrentAgentType, CurrentActiveAgentType)
 from .processor import start_listen_thread, stop_listen_thread, forget_handler, WebSocketDispatcher
 
 log = logging.getLogger()
@@ -159,19 +159,14 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
 ):
-    async with ClientSession() as session:
-        agent = await authenticate_agent(session, form_data.username, form_data.password)
-    if not agent:
+    token = await get_token(form_data.username, form_data.password)
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": f'agent:{agent.id}'}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": token, "token_type": "bearer"}
 
 
 @app.get("/agents/me/", response_model=AgentModel)
@@ -184,7 +179,7 @@ async def read_agents_me(
 async def add_agent(model: AgentModelWithPw, response: Response, current_agent: CurrentAgentType) -> None:
     async with agent_session(current_agent) as session:
         # TODO: Password integrity rules
-        value = await session.scalar(func.create_agent(model.email, model.passwd, model.username, model.is_admin))
+        value = await session.scalar(func.create_agent(model.email, model.passwd, model.username, model.permissions))
         await session.commit()
         response.status_code = status.HTTP_201_CREATED
         # location is not public
@@ -193,7 +188,7 @@ async def add_agent(model: AgentModelWithPw, response: Response, current_agent: 
 @app.get("/agents")
 async def get_agents(current_agent: CurrentActiveAgentType) -> List[AgentModel]:
     print('get_agents')
-    if not current_agent.is_admin:
+    if  not current_agent.has_permission('admin'):
         raise HTTPException(status_code=403, detail="Admin access required")
     async with agent_session(current_agent) as session:
         r = await session.execute(select(Agent))
@@ -205,7 +200,7 @@ async def get_agents(current_agent: CurrentActiveAgentType) -> List[AgentModel]:
 async def patch_agent(
         model: AgentModelOptional, username: str, response: Response,
         current_agent: CurrentActiveAgentType) -> AgentModel:
-    if not (current_agent.username == username or current_agent.is_admin):
+    if not (current_agent.username == username or 'admin' in current_agent.permissions):
         raise HTTPException(401, "Cannot modify another agent")
     async with agent_session(current_agent) as session:
         agent = await session.execute(select(Agent).filter_by(username=username))
@@ -236,6 +231,8 @@ async def get_remote_source(source_id: int, current_agent: CurrentAgentType) -> 
 
 @app.post("/remote_source")
 async def add_remote_source(model: RemoteSourceModel, response: Response, current_agent: CurrentActiveAgentType):
+    if  not current_agent.has_permission('add_source'):
+        raise HTTPException(401)
     async with agent_session(current_agent) as session:
         if source.local_name:
             raise HTTPException(400, "Remote sources cannot have a local name")
@@ -265,6 +262,8 @@ async def get_local_source(source_name: str, current_agent: CurrentAgentType) ->
 async def add_local_source(
         model: LocalSourceModel, request: Request, response: Response,
         current_agent: CurrentActiveAgentType):
+    if  not current_agent.has_permission('add_source'):
+        raise HTTPException(401)
     async with agent_session(current_agent) as session:
         uri = f"{request.base_url}/source/{model.local_name}"
         source = await Source.ensure(session, uri, model.local_name, None)
@@ -431,8 +430,7 @@ async def delete_local_source_permissions(
 
 @app.post("/schema")
 async def add_schema(schema: HkSchema, request: Request, response: Response, current_agent: CurrentActiveAgentType):
-    if not current_agent.is_admin:
-        # TODO: a permission lower than admin to add schemas
+    if  not current_agent.has_permission('add_schema'):
         raise HTTPException(401)
     schema_json = await request.json()
     ctx = schema.context
@@ -475,6 +473,8 @@ async def get_schema(schema_id: int, current_agent: CurrentAgentType) -> HkSchem
 
 @app.delete("/schema/{schema_id}")
 async def delete_schema(schema_id: int, current_agent: CurrentActiveAgentType):
+    if  not current_agent.has_permission('admin'):
+        raise HTTPException(401)
     async with agent_session(current_agent) as session:
         s = await session.get(Struct, schema_id)
         if s:
@@ -618,8 +618,7 @@ async def get_handler(handler_id: int, current_agent: CurrentAgentType) -> Event
 
 @app.post("/handler")
 async def add_handlers(handlers: EventHandlerSchemas, response: Response, current_agent: CurrentActiveAgentType) -> List[int]:
-    if not current_agent.is_admin:
-        # TODO: a permission lower than admin to add handlers
+    if  not current_agent.has_permission('add_handler'):
         raise HTTPException(401)
     db_handlers = []
     async with agent_session(current_agent) as session:

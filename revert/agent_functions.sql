@@ -29,10 +29,13 @@ DROP FUNCTION IF EXISTS  public.renew_token(token character varying);
 DROP FUNCTION IF EXISTS  public.send_login_email(email varchar);
 DROP FUNCTION IF EXISTS  public.scagent_handle();
 DROP FUNCTION IF EXISTS  public.role_to_handle(role character varying);
+DROP FUNCTION IF EXISTS  public.role_to_id(role character varying);
 DROP FUNCTION IF EXISTS  public.has_permission(permission character varying);
+DROP FUNCTION IF EXISTS  public.has_permission(public.permission);
 DROP FUNCTION IF EXISTS  public.current_agent();
 DROP FUNCTION IF EXISTS  public.current_agent_id();
-DROP FUNCTION IF EXISTS  public.create_agent(name character varying, email character varying, password character varying, handle character varying, permissions permission[]);
+DROP FUNCTION IF EXISTS  public.create_agent(character varying, character varying, character varying, boolean);
+DROP FUNCTION IF EXISTS  public.create_agent(character varying, character varying, character varying, public.permission[]);
 DROP FUNCTION IF EXISTS  public.is_superadmin();
 
 COMMIT;

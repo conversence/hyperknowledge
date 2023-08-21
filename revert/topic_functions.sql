@@ -21,6 +21,8 @@ DROP FUNCTION IF EXISTS public.after_create_uuid();
 DROP FUNCTION IF EXISTS public.ensure_uuid(UUID);
 DROP FUNCTION IF EXISTS public.ensure_binary_data(bytea);
 DROP FUNCTION IF EXISTS public.ensure_struct(JSONB, struct_type, varchar, varchar, varchar);
+DROP FUNCTION IF EXISTS ensure_source(varchar, varchar, varchar);
+DROP FUNCTION IF EXISTS ensure_source(varchar, varchar, boolean, boolean, boolean);
 DROP FUNCTION IF EXISTS public.after_create_binary_data();
 DROP FUNCTION IF EXISTS public.after_create_struct();
 DROP FUNCTION IF EXISTS ensure_term_url(varchar, varchar);

@@ -75,8 +75,8 @@ async def test_add_event(client, clean_tables, simple_schema, handlers):
     response = await client.post("/agents", json=agent.model_dump())
     assert response.status_code == 201, response.json()
 
-    # Confirm the non-admin user by the admin user
-    response = await client.patch("/agents/quidam", json=dict(confirmed=True), headers=headers)
+    # Confirm the non-admin user by the admin user, and give them add_source
+    response = await client.patch("/agents/quidam", json=dict(confirmed=True, permissions=['add_source']), headers=headers)
     assert response.status_code == 200, response.json()
     print(response.json())
 

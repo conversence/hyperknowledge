@@ -7,13 +7,14 @@ from contextlib import asynccontextmanager, suppress
 import anyio
 from datetime import timezone
 from sqlalchemy import select, text
+from sqlalchemy.sql.functions import func
 from fastapi import HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 
 from .. import Session, ClientSession, db_config_get
-from .schemas import (BaseModel, AgentModel, AgentModelWithPw)
+from .schemas import (BaseModel, AgentModel, AgentModelWithPw, AgentModelOptional)
 from .models import Agent
 
 SECRET_KEY = db_config_get('auth_secret')
@@ -84,7 +85,7 @@ async def get_current_agent(token: Annotated[str, Depends(oauth2_scheme)]) -> Op
         token_data = TokenData(id=user_id)
     except JWTError as e:
         raise credentials_exception from e
-    async with Session() as session:
+    async with agent_session(AgentModelOptional(id=token_data.id)) as session:
         agent = await get_agent(session, agent_id=token_data.id)
     if agent is None:
         raise credentials_exception
@@ -102,6 +103,15 @@ async def get_current_active_agent(
     if not current_agent.confirmed:
         raise HTTPException(status_code=400, detail="Not confirmed")
     return current_agent
+
+
+async def get_token(username, password):
+    async with ClientSession() as session:
+        token = await session.scalar(select(func.get_token(username, password)))
+        if token:
+            await session.commit()   # Updating last_login
+        return token
+
 
 CurrentAgentType = Annotated[AgentModel, Depends(get_current_agent)]
 CurrentActiveAgentType = Annotated[AgentModel, Depends(get_current_active_agent)]

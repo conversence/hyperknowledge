@@ -48,6 +48,14 @@ event_handler_language = ENUM(
     name='event_handler_language'
 )
 
+permission = ENUM(
+    'add_schema',
+    'add_source',
+    'add_handler',
+    'admin',
+    name='permission'
+)
+
 
 class Topic(Base):
     """Anything that can be talked about or referred to is a topic. The root class.
@@ -292,13 +300,18 @@ class Agent(Base):
     username: Mapped[String] = mapped_column(String, nullable=False, unique=True)
     passwd: Mapped[String] = mapped_column(String, nullable=False)
     confirmed: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
-    is_admin: Mapped[Boolean] = mapped_column(Boolean, server_default='false')
+    permissions: Mapped[List[permission]] = mapped_column(ARRAY(permission), server_default='{}')
     created: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP, server_default="now() AT TIME ZONE 'UTC'")
+    last_login: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP)
     last_login_email_sent: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP)
 
     source_permissions: Mapped[List[AgentSourcePermission]] = relationship("AgentSourcePermission", back_populates="agent")
     source_selective_permissions: Mapped[List[AgentSourceSelectivePermission]] = relationship("AgentSourceSelectivePermission", back_populates="agent")
     processors: Mapped[List[EventProcessor]] = relationship("EventProcessor", back_populates="owner")
+
+    def has_permission(self, permission: str) -> bool:
+        return permission in self.permissions or 'admin' in self.permissions
+
 
 class Source(Vocabulary):
     __tablename__ = 'source'

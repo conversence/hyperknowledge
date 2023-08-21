@@ -185,9 +185,13 @@ class AgentModel(BaseModel):
     email: str
     username: str
     confirmed: bool = False
-    is_admin: bool = False
+    permissions: List[str] = []   # TODO: Enum
     created: Optional[datetime] = None
+    last_login: Optional[datetime] = None
     last_login_email_sent: Optional[datetime] = None
+
+    def has_permission(self, permission: str) -> bool:
+        return permission in self.permissions or 'admin' in self.permissions
 
 
 class AgentModelWithPw(AgentModel):

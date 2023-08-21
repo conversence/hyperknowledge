@@ -10,6 +10,13 @@ CREATE SEQUENCE IF NOT EXISTS public.topic_id_seq
     NO MAXVALUE
     CACHE 1;
 
+CREATE TYPE public.permission AS ENUM (
+    'add_schema',
+    'add_source',
+    'add_handler',
+    'admin'
+);
+
 CREATE TYPE public.id_type AS ENUM (
     -- references
     'vocabulary',

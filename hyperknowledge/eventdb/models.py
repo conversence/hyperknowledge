@@ -8,11 +8,20 @@ from uuid import UUID as UUIDv
 from rdflib import URIRef
 from sqlalchemy import ForeignKey, String, Text, Boolean, Integer, Table, Column, select, delete, update
 from sqlalchemy.sql.functions import func, GenericFunction
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, declared_attr, foreign, remote, joinedload, aliased
+from sqlalchemy.sql.expression import join, column
+from sqlalchemy.ext.hybrid import hybrid_property, hybrid_method
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, declared_attr, foreign, remote, joinedload, aliased, column_property
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, ENUM, UUID, TIMESTAMP, BYTEA
 from sqlalchemy_utils import LtreeType
 
 from . import dbTopicId, PydanticURIRef
+
+class classproperty(object):
+    def __init__(self, f):
+        self.f = f
+    def __get__(self, obj, owner):
+        return self.f(owner)
+
 
 class Base(DeclarativeBase):
     pass
@@ -312,6 +321,14 @@ class Agent(Base):
     def has_permission(self, permission: str) -> bool:
         return permission in self.permissions or 'admin' in self.permissions
 
+source_inclusion_table = Table(
+    'source_inclusion', Base.metadata,
+    Column('included_id', dbTopicId, ForeignKey('source.id'), primary_key=True),
+    Column('including_id', dbTopicId, ForeignKey('source.id'), primary_key=True)
+)
+
+class including_sources(GenericFunction):
+    type: List[dbTopicId]
 
 class Source(Vocabulary):
     __tablename__ = 'source'
@@ -328,14 +345,25 @@ class Source(Vocabulary):
     last_event_t: Mapped[LastEvent] = relationship(back_populates='source')
     creator: Mapped[Agent] = relationship(Agent, primaryjoin=creator_id==Agent.id)
 
-    def filter_event_query(self, query, session, alias=None):
+    included_source_ids: Mapped[List[dbTopicId]] = column_property(select(func.array_agg(source_inclusion_table.c.included_id)).filter(source_inclusion_table.c.including_id==id))
+    included_sources: Mapped[List[Source]] = relationship("Source", secondary=source_inclusion_table, primaryjoin=id==source_inclusion_table.c.including_id, secondaryjoin=source_inclusion_table.c.included_id==id, back_populates="including_sources")
+    including_sources: Mapped[List[Source]] = relationship("Source", secondary=source_inclusion_table, primaryjoin=id==source_inclusion_table.c.included_id, secondaryjoin=source_inclusion_table.c.including_id==id, back_populates="included_sources")
+
+    included_source_ids_rec: Mapped[List[dbTopicId]] = column_property(func.included_sources(foreign(id), type_=ARRAY(dbTopicId)), deferred=True)
+    including_source_ids_rec: Mapped[List[dbTopicId]] = column_property(func.including_sources(foreign(id), type_=ARRAY(dbTopicId)), deferred=True)
+
+    included_sources_rec: Mapped[List[Source]] = relationship("Source", viewonly=True, uselist=True,
+        primaryjoin="Source.included_source_ids_rec.any(remote(Source.id))")
+    including_sources_rec: Mapped[List[Source]] = relationship("Source", viewonly=True, uselist=True,
+        primaryjoin="Source.including_source_ids_rec.any(remote(Source.id))")
+
+    def filter_event_query(self, query, alias=None):
         target = alias or Event
-        # TODO: class dependencies
-        return query.filter(target.source_id == self.id)
+        return query.filter(Source.included_source_ids_rec.any(target.source_id), Source.id==self.id)
 
     @classmethod
-    async def ensure(cls, session, uri: str, local_name: str, public_read: bool=True, public_write: bool=False, selective_write: bool=False) -> Source:
-        id_ = await session.scalar(ensure_source(uri, local_name, public_read, public_write, selective_write))
+    async def ensure(cls, session, uri: str, local_name: str, public_read: bool=True, public_write: bool=False, selective_write: bool=False, includes_source_ids: List[int]=[]) -> Source:
+        id_ = await session.scalar(ensure_source(uri, local_name, public_read, public_write, selective_write, includes_source_ids))
         await session.flush()
         return  await session.get(cls, id_)
 
@@ -368,6 +396,11 @@ class Event(Base):
     event_type: Mapped[Term] = relationship(Term, primaryjoin=event_type_id==Term.id)
     handlers: Mapped[List[EventHandler]] = relationship(
         EventHandler, primaryjoin=foreign(event_type_id)==remote(EventHandler.event_type_id), viewonly=True, uselist=True)
+
+    including_source_ids_rec = column_property(func.including_sources(foreign(source_id), type_=ARRAY(dbTopicId)), deferred=True)
+
+    included_in_sources: Mapped[List[Source]] = relationship(Source, viewonly=True, uselist=True,
+        primaryjoin="Event.including_source_ids_rec.any(remote(Source.id))")
 
 
 class LastEvent(Base):

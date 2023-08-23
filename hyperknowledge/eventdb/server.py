@@ -10,6 +10,7 @@ from typing_extensions import TypedDict
 from pydantic import ConfigDict, BaseModel
 from sqlalchemy import select, text, delete
 from sqlalchemy.sql.functions import func
+from sqlalchemy.sql.expression import and_
 from sqlalchemy.orm import joinedload
 from fastapi import FastAPI, HTTPException, Request, Depends, status, Response, Query
 from fastapi.security import OAuth2PasswordRequestForm
@@ -182,7 +183,7 @@ async def add_agent(model: AgentModelWithPw, response: Response, current_agent: 
         value = await session.scalar(func.create_agent(model.email, model.passwd, model.username, model.permissions))
         await session.commit()
         response.status_code = status.HTTP_201_CREATED
-        # location is not public
+        # location is not public... maybe for admin?
 
 
 @app.get("/agents")
@@ -230,7 +231,8 @@ async def get_remote_source(source_id: int, current_agent: CurrentAgentType) -> 
         raise HTTPException(status_code=404, detail="Source does not exist")
 
 @app.post("/remote_source")
-async def add_remote_source(model: RemoteSourceModel, response: Response, current_agent: CurrentActiveAgentType):
+async def add_remote_source(model: RemoteSourceModel, response: Response, current_agent: CurrentActiveAgentType
+        ) -> RemoteSourceModel:
     if  not current_agent.has_permission('add_source'):
         raise HTTPException(401)
     async with agent_session(current_agent) as session:
@@ -242,6 +244,7 @@ async def add_remote_source(model: RemoteSourceModel, response: Response, curren
         await session.commit()
         response.status_code = status.HTTP_201_CREATED
         response.headers["Location"] = f"/remote_source/{source.id}"
+        return RemoteSourceModel.model_validate(source)
 
 @app.get("/source")
 async def get_local_sources(current_agent: CurrentAgentType) -> Dict[str, PydanticURIRef]:
@@ -261,15 +264,21 @@ async def get_local_source(source_name: str, current_agent: CurrentAgentType) ->
 @app.post("/source")
 async def add_local_source(
         model: LocalSourceModel, request: Request, response: Response,
-        current_agent: CurrentActiveAgentType):
+        current_agent: CurrentActiveAgentType) -> LocalSourceModel:
     if  not current_agent.has_permission('add_source'):
         raise HTTPException(401)
     async with agent_session(current_agent) as session:
         uri = f"{request.base_url}/source/{model.local_name}"
-        source = await Source.ensure(session, uri, model.local_name, None)
+        if model.included_source_ids:
+            can_read = await session.execute(select(and_(*[func.can_read_source(source_id) for source_id in model.included_source_ids])))
+            if not can_read:
+                raise HTTPException(403, "Cannot read included sources")
+        source = await Source.ensure(session, uri, model.local_name, model.public_read, model.public_write, model.selective_write, model.included_source_ids)
         await session.commit()
         response.status_code = status.HTTP_201_CREATED
         response.headers["Location"] = f"/source/{source.local_name}"
+        await session.refresh(source, ["creator", "included_source_ids"])
+        return LocalSourceModel.model_validate(source)
 
 
 @app.get("/source/{source_name}/permission")
@@ -573,7 +582,7 @@ class ContextData(TypedDict):
     url: str
 
 @app.post("/context")
-async def add_context(data: ContextData, response: Response, current_agent: CurrentActiveAgentType) -> int:
+async def add_context(data: ContextData, response: Response, current_agent: CurrentActiveAgentType):
     url = data['url']
     ctx = data.get('ctx')
     async with agent_session(current_agent) as session:
@@ -591,7 +600,7 @@ async def add_context(data: ContextData, response: Response, current_agent: Curr
         await session.commit()
         response.status_code = status.HTTP_201_CREATED
         response.headers["Location"] = f"/context/{context_struct.id}"
-        return context_struct.id
+        return context_struct
 
 @app.get("/handler")
 async def get_handlers(current_agent: CurrentAgentType) -> Dict[int, Tuple[str, str, str]]:
@@ -617,7 +626,7 @@ async def get_handler(handler_id: int, current_agent: CurrentAgentType) -> Event
 
 
 @app.post("/handler")
-async def add_handlers(handlers: EventHandlerSchemas, response: Response, current_agent: CurrentActiveAgentType) -> List[int]:
+async def add_handlers(handlers: EventHandlerSchemas, response: Response, current_agent: CurrentActiveAgentType) -> List[EventHandlerSchema]:
     if  not current_agent.has_permission('add_handler'):
         raise HTTPException(401)
     db_handlers = []
@@ -639,7 +648,7 @@ async def add_handlers(handlers: EventHandlerSchemas, response: Response, curren
         session.add_all(db_handlers)
         await session.commit()
     response.status_code = status.HTTP_201_CREATED
-    return [h.id for h in db_handlers]
+    return [EventHandlerSchema.model_validate(h) for h in db_handlers]
 
 
 if not production:

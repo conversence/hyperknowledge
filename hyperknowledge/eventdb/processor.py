@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 from threading import Thread
 from datetime import datetime
-from typing import Dict, Optional, Iterable, Union, Tuple
+from typing import Dict, Optional, Iterable, Union, Tuple, List
 from collections import defaultdict
 from enum import Enum, IntEnum
 import logging
@@ -31,7 +31,7 @@ from . import dbTopicId
 from .models import (
     Base, EventProcessor, Event, Source, Term, Topic, EventHandler
 )
-from .schemas import getEventModel, HkSchema, getProjectionSchemas, ProjectionSchema, GenericEventModel, AgentModel
+from .schemas import getEventModel, HkSchema, getProjectionSchemas, ProjectionSchema, GenericEventModel, AgentModel, EventAttributeSchema
 from .make_tables import KNOWN_DB_MODELS, db_to_projection, projection_to_db
 
 log = logging.getLogger("processor")
@@ -82,7 +82,7 @@ class AbstractProcessorQueue():
             if not self.started:
                 max_date_q = select(func.max(Event.created))
                 if self.source:
-                    max_date_q = self.source.filter_event_query(max_date_q, session)
+                    max_date_q = self.source.filter_event_query(max_date_q)
                 self.last_seen = await session.scalar(max_date_q)
                 if self.proc:
                     self.last_processed = EventProcessor.last_event_ts
@@ -90,7 +90,7 @@ class AbstractProcessorQueue():
             if self.last_processed is not None:
                 event_query = event_query.filter(Event.created > (self.last_fetched or self.last_processed)).order_by(Event.created)
             if self.source:
-                event_query = self.source.filter_event_query(event_query, session)
+                event_query = self.source.filter_event_query(event_query)
             events = await session.execute(event_query.options(
                 joinedload(Event.event_type).joinedload(Term.schema),
                 joinedload(Event.source),
@@ -209,15 +209,13 @@ class ProjectionProcessor(PushProcessorQueue):
         event_type = hk_schema.context.shrink_iri(event.data.type)
         event_hk_schema = hk_schema.eventSchemas[event.data.type.split(':')[1]]
         db_model_by_role: Dict[str, type[Base]] = {}
-        db_object_by_role: Dict[str, Base] = {}
-        projection_by_role: Dict[str, Json] = {}
-        updated_projection_by_role: Dict[str, Json] = {}
         projection_model_by_role: Dict[str, BaseModel] = {}
         projection_schemas = getProjectionSchemas()
         schemas_by_role: Dict[str, ProjectionSchema] = {}
         topic_id_by_role: Dict[str, dbTopicId] = {}
-        # TODO: Do the following for each source that the event applies to
+        attrib_schema_by_name: Dict[str, EventAttributeSchema] = {}
         for attrib_schema in event_hk_schema.attributes:
+            attrib_schema_by_name[attrib_schema.name] = attrib_schema
             value = getattr(event.data, attrib_schema.name)
             if not value:
                 continue
@@ -236,47 +234,63 @@ class ProjectionProcessor(PushProcessorQueue):
                 log.warning("Missing topic:", value)
                 continue
             topic_id_by_role[attrib_schema.name] = entity_id.id
-            # TODO: Check that range's id is in topic's as_projection
-            db_projection = await session.execute(select(range_db_model).filter_by(id=entity_id.id, source_id=db_event.source_id, obsolete=None))
-            if db_projection := db_projection.one_or_none():
-                db_projection = db_projection[0]
-            else:
-                log.warning("projection not found")
-                continue
-            pd_projection = await db_to_projection(session, db_projection, range_model, range_schema)
-            db_object_by_role[attrib_schema.name] = db_projection
-            projection_by_role[attrib_schema.name] = pd_projection.model_dump(by_alias=True)
-        # apply the handlers
-        # TODO: Cache
-        handlers = await session.execute(select(EventHandler).filter_by(event_type_id=db_event.event_type_id).options(joinedload(EventHandler.target_range)))
-        for (handler, ) in handlers:
-            if handler.language != 'javascript':
-                raise NotImplementedError()
-            handler_fname = f"handler_{handler.id}"
-            if handler.id not in self.loaded_handlers:
-                handler_txt = handler.code_text.replace('function handler(', f'function {handler_fname}(')
-                self.js_ctx.eval(handler_txt)
-                self.loaded_handlers.add(handler.id)
-            js = f"{handler_fname}({event.model_dump_json(by_alias=True, exclude_unset=True)}, {projection_by_role})"
-            result = self.js_ctx.execute(js)
-            # Convenience so the handler does not have to do it
-            if result["@type"] == event.data.type:
-                result["@type"] = hk_schema.context.shrink_iri(handler.target_range.uri)
-            # Use either create or update model according to whether it exists
-            new_projection = projection_model_by_role[handler.target_role].model_validate(result)
-            db_data = await projection_to_db(session, new_projection, schemas_by_role[handler.target_role])
-            if handler.target_role in db_object_by_role:
-                db_projection = db_object_by_role[handler.target_role]
-                for k, v in db_data.items():
-                    setattr(db_projection, k, v)
-            else:
-                db_projection = db_model_by_role[handler.target_role](
-                    id= topic_id_by_role[handler.target_role],source_id=db_event.source_id, event_time=db_event.created ,**db_data)
-                session.add(db_projection)
-            # Should I update the current one? It introduces order-dependence, so no.
-            # THOUGH I could do it for missing values first?
-            updated_projection_by_role[handler.target_role] = new_projection.model_dump()
-            # TODO: Make sure the projection type is in the topic
+        # TODO: Cache handlers, make the handlers per source
+        r = await session.execute(select(EventHandler).filter_by(event_type_id=db_event.event_type_id).options(joinedload(EventHandler.target_range)))
+        handlers: List[EventHandler] = r.scalars().all()
+        # Note the event may come from another session
+        db_event2 = await session.merge(db_event)
+        await session.refresh(db_event2, ("included_in_sources",))
+        for source in db_event2.included_in_sources:
+            db_object_by_role: Dict[str, Base] = {}
+            projection_by_role: Dict[str, Json] = {}
+            updated_projection_by_role: Dict[str, Json] = {}
+            for attrib_schema in event_hk_schema.attributes:
+                if attrib_schema.name not in topic_id_by_role:
+                    continue
+                # TODO: Check that range's id is in topic's as_projection
+                db_projection = await session.execute(select(range_db_model).filter_by(id=entity_id.id, source_id=source.id, obsolete=None))
+                if db_projection := db_projection.one_or_none():
+                    db_projection = db_projection[0]
+                else:
+                    log.warning("projection not found")
+                    continue
+                range_model = projection_model_by_role.get(attrib_schema.name)
+                range_schema = schemas_by_role.get(attrib_schema.name)
+                pd_projection = await db_to_projection(session, db_projection, range_model, range_schema)
+                db_object_by_role[attrib_schema.name] = db_projection
+                projection_by_role[attrib_schema.name] = pd_projection.model_dump(by_alias=True)
+            # apply the handlers
+            for handler in handlers:
+                if handler.language != 'javascript':
+                    raise NotImplementedError()
+                handler_fname = f"handler_{handler.id}"
+                if handler.id not in self.loaded_handlers:
+                    handler_txt = handler.code_text.replace('function handler(', f'function {handler_fname}(')
+                    self.js_ctx.eval(handler_txt)
+                    self.loaded_handlers.add(handler.id)
+                target_attrib_schema = attrib_schema_by_name[handler.target_role]
+                if handler.target_role not in projection_by_role and not target_attrib_schema.create:
+                    continue
+                js = f"{handler_fname}({event.model_dump_json(by_alias=True, exclude_unset=True)}, {projection_by_role})"
+                result = self.js_ctx.execute(js)
+                # Convenience so the handler does not have to do it
+                if result["@type"] == event.data.type:
+                    result["@type"] = hk_schema.context.shrink_iri(handler.target_range.uri)
+                # Use either create or update model according to whether it exists
+                new_projection = projection_model_by_role[handler.target_role].model_validate(result)
+                db_data = await projection_to_db(session, new_projection, schemas_by_role[handler.target_role])
+                if handler.target_role in db_object_by_role:
+                    db_projection = db_object_by_role[handler.target_role]
+                    for k, v in db_data.items():
+                        setattr(db_projection, k, v)
+                else:
+                    db_projection = db_model_by_role[handler.target_role](
+                        id= topic_id_by_role[handler.target_role],source_id=source.id, event_time=db_event.created ,**db_data)
+                    session.add(db_projection)
+                # Should I update the current one? It introduces order-dependence, so no.
+                # THOUGH I could do it for missing values first?
+                updated_projection_by_role[handler.target_role] = new_projection.model_dump()
+                # TODO: Make sure the projection type is in the topic
 
     def after_event(self, db_event: Event):
         WebSocketDispatcher.dispatcher.add_event(db_event)
@@ -422,10 +436,10 @@ class WebSocketDispatcher(PushProcessorQueue):
             wproc = self.by_source[source_id].pop((wproc.proc.owner_id, wproc.proc.name))
         wproc.stop_processor()
 
-    async def process_event(self, event: Event, session=None):
-        #TODO multisource
-        sources = [event.source_id]
-        for source_id in sources:
+    async def process_event(self, event: Event, session):
+        e2 = await session.merge(event, load=False)
+        await session.refresh(e2, ['including_source_ids_rec'])
+        for source_id in e2.including_source_ids_rec:
             for processor in self.by_source[source_id].values():
                 processor.add_event(event)
 
@@ -503,10 +517,9 @@ class WebSocketHandler():
             else:
                 raise RuntimeError(f"No such processor {proc_name}")
             self.set_start_time(processor, start_time)
-            # TODO
-            source_set = {processor.source.id}
+            await session.refresh(source, ['included_sources_ids_rec'])
             await session.commit()
-        wproc = WebSocketProcessor(self.socket, processor, source_set, autoack=autoack)
+        wproc = WebSocketProcessor(self.socket, processor, source.included_sources_ids_rec, autoack=autoack)
         self.processors[proc_name] = wproc
         # We're in the main thread; we want to run in the processor thread
         Dispatcher.dispatcher.portal.start_task_soon(WebSocketDispatcher.dispatcher.add_ws_processor, wproc)

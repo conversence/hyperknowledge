@@ -4,12 +4,11 @@ import os
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, async_scoped_session
 
-
 config = ConfigParser()
 # print(Path(__file__).parent.joinpath("config.ini"))
 config.read(Path(__file__).parent.parent.joinpath("config.ini"))
 production = os.environ.get("PRODUCTION", False)
-target_db = os.environ.get("TARGET_DB", "production" if production else "development")
+target_db = os.environ.get("TARGET_DB", ("test" if "PYTEST_CURRENT_TEST" in os.environ else ("production" if production else "development")))
 
 
 def db_config_get(key: str):

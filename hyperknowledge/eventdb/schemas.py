@@ -135,11 +135,26 @@ class ProjectionSchema(EventSchema):
 
 
 class EventHandlerSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     event_type: PydanticURIRef
     target_range: PydanticURIRef
     target_role: str
     code_text: str
     language: str = 'javascript'  # TODO: Make it an enum
+
+    @field_validator('event_type', mode='before')
+    @classmethod
+    def add_event_type(cls, event_type, info):
+        if isinstance(event_type, DeclarativeBase):
+            return PydanticURIRef(event_type.uri)
+        return PydanticURIRef(event_type) if event_type else None
+
+    @field_validator('target_range', mode='before')
+    @classmethod
+    def add_target_range(cls, target_range, info):
+        if isinstance(target_range, DeclarativeBase):
+            return PydanticURIRef(target_range.uri)
+        return PydanticURIRef(target_range) if target_range else None
 
 
 class EventHandlerSchemas(JsonLdModel):
@@ -168,8 +183,16 @@ class BaseSourceModel(BaseModel):
     public_write: bool = False
     selective_write: bool = False
 
+    @field_validator('creator', mode='before')
+    @classmethod
+    def add_creator(cls, creator, info):
+        return creator.username if isinstance(creator, DeclarativeBase) else creator
+
+
 class LocalSourceModel(BaseSourceModel):
     local_name: str
+    included_source_ids: Optional[List[int]] = []
+
 
 class RemoteSourceModel(BaseSourceModel):
     uri: PydanticURIRef

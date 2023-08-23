@@ -21,6 +21,18 @@ CREATE TABLE public.source (
 
 CREATE UNIQUE INDEX IF NOT EXISTS source_local_name_idx on public.source (local_name);
 
+CREATE TABLE source_inclusion (
+  included_id BIGINT NOT NULL,
+  including_id BIGINT NOT NULL,
+  CONSTRAINT source_inclusion_pkey PRIMARY KEY (included_id, including_id),
+  CONSTRAINT source_inclusion_included_fkey FOREIGN KEY (included_id)
+    REFERENCES public.source (id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT source_inclusion_including_fkey FOREIGN KEY (including_id)
+    REFERENCES public.source (id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- index on including?
+
 CREATE TABLE public.event (
   source_id BIGINT NOT NULL,
   created TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (statement_timestamp() AT TIME ZONE 'UTC'),

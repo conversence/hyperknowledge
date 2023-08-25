@@ -345,7 +345,7 @@ class Source(Vocabulary):
     last_event_t: Mapped[LastEvent] = relationship(back_populates='source')
     creator: Mapped[Agent] = relationship(Agent, primaryjoin=creator_id==Agent.id)
 
-    included_source_ids: Mapped[List[dbTopicId]] = column_property(select(func.array_agg(source_inclusion_table.c.included_id)).filter(source_inclusion_table.c.including_id==id))
+    included_source_ids: Mapped[List[dbTopicId]] = column_property(select(func.array_agg(source_inclusion_table.c.included_id)).filter(source_inclusion_table.c.including_id==id).scalar_subquery())
     included_sources: Mapped[List[Source]] = relationship("Source", secondary=source_inclusion_table, primaryjoin=id==source_inclusion_table.c.including_id, secondaryjoin=source_inclusion_table.c.included_id==id, back_populates="including_sources")
     including_sources: Mapped[List[Source]] = relationship("Source", secondary=source_inclusion_table, primaryjoin=id==source_inclusion_table.c.included_id, secondaryjoin=source_inclusion_table.c.including_id==id, back_populates="included_sources")
 

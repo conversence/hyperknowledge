@@ -13,13 +13,13 @@ GRANT SELECT,INSERT, UPDATE ON TABLE public.topic TO :dbm;
 GRANT SELECT ON TABLE public.topic to :dbc;
 GRANT SELECT,INSERT, UPDATE ON TABLE public.vocabulary TO :dbm;
 GRANT SELECT ON TABLE public.vocabulary to :dbc;
-GRANT SELECT,INSERT, UPDATE ON TABLE public.term TO :dbm;
+GRANT SELECT,INSERT ON TABLE public.term TO :dbm;
 GRANT SELECT ON TABLE public.term to :dbc;
-GRANT SELECT,INSERT, UPDATE ON TABLE public.uuidentifier TO :dbm;
+GRANT SELECT,INSERT ON TABLE public.uuidentifier TO :dbm;
 GRANT SELECT ON TABLE public.uuidentifier to :dbc;
-GRANT SELECT,INSERT, UPDATE ON TABLE public.langstring TO :dbm;
+GRANT SELECT,INSERT ON TABLE public.langstring TO :dbm;
 GRANT SELECT ON TABLE public.langstring to :dbc;
-GRANT SELECT,INSERT, UPDATE ON TABLE public.struct TO :dbm;
+GRANT SELECT,INSERT ON TABLE public.struct TO :dbm;
 GRANT SELECT ON TABLE public.struct to :dbc;
 GRANT SELECT,INSERT, UPDATE ON TABLE public.binary_data TO :dbm;
 GRANT SELECT ON TABLE public.binary_data to :dbc;
@@ -53,7 +53,7 @@ CREATE OR REPLACE FUNCTION public.ensure_langstring(value_ varchar, lang_ varcha
       -- upsert
       set constraints langstring_id_fkey deferred;
       INSERT INTO public.langstring (value, lang) VALUES (value_, inputtag)
-        ON CONFLICT (value, lang) DO UPDATE SET value=EXCLUDED.value
+        ON CONFLICT (value, lang) DO NOTHING
         RETURNING id INTO ls_id;
     END IF;
     RETURN ls_id;
@@ -96,7 +96,7 @@ CREATE OR REPLACE FUNCTION ensure_vocabulary(vocabulary_ varchar, prefix_ varcha
       -- upsert
       set constraints vocabulary_id_fkey deferred;
       INSERT INTO public.vocabulary (uri, prefix) VALUES (vocabulary_, prefix_)
-        ON CONFLICT (uri) DO UPDATE SET uri = EXCLUDED.uri
+        ON CONFLICT (uri) DO NOTHING
         RETURNING id INTO voc_id;
     ELSE
       IF prefix_ IS NOT NULL AND (prefix_ != voc_prefix) OR voc_prefix IS NULL THEN
@@ -120,7 +120,7 @@ CREATE OR REPLACE FUNCTION ensure_term_with_voc(term_ varchar, voc_id BIGINT) RE
     IF term_id IS NULL THEN
       -- upsert
       INSERT INTO public.term (vocabulary_id, term) VALUES (voc_id, term_)
-        ON CONFLICT (vocabulary_id, term) DO UPDATE SET term = term_
+        ON CONFLICT (vocabulary_id, term) DO NOTHING
         RETURNING id INTO term_id;
     END IF;
     RETURN term_id;
@@ -210,7 +210,7 @@ CREATE OR REPLACE FUNCTION public.ensure_uuid(value_ UUID DEFAULT NULL) RETURNS 
         RETURNING id INTO uid;
       ELSE
         INSERT INTO public.uuidentifier (value) VALUES (value_)
-        ON CONFLICT (value) DO UPDATE SET value=value_
+        ON CONFLICT (value) DO NOTHING
         RETURNING id INTO uid;
       END IF;
     END IF;
@@ -242,7 +242,7 @@ CREATE OR REPLACE FUNCTION public.ensure_binary_data(data bytea) RETURNS BIGINT
     IF id_ IS NULL THEN
       -- TODO: Avoid calculating the sha256 twice
       INSERT INTO public.binary_data (value) VALUES (data)
-        ON CONFLICT DO UPDATE SET value = data
+        ON CONFLICT DO NOTHING
         RETURNING id INTO id_;
     END IF;
     return id_;
@@ -254,7 +254,7 @@ CREATE OR REPLACE FUNCTION public.after_create_struct() RETURNS trigger
   LANGUAGE plpgsql AS $$
   BEGIN
     INSERT INTO public.topic (id, base_type) VALUES (NEW.id, 'struct')
-      ON CONFLICT (id) DO UPDATE SET base_type='struct';
+      ON CONFLICT (id) DO NOTHING;
     RETURN NEW;
   END;
 $$;

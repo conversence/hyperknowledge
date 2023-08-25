@@ -178,7 +178,6 @@ async def quidam_test_source(quidam_token, client):
 @pytest.fixture(scope="function")
 async def quidam_dep_test_source(quidam_token, quidam_test_source, client):
     from hyperknowledge.eventdb.schemas import LocalSourceModel
-    print(quidam_test_source)
     assert(quidam_test_source.id)
     headers = dict(Authorization=f"Bearer {quidam_token}")
     source = LocalSourceModel(local_name="test2", included_source_ids=[quidam_test_source.id])

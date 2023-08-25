@@ -517,9 +517,9 @@ class WebSocketHandler():
             else:
                 raise RuntimeError(f"No such processor {proc_name}")
             self.set_start_time(processor, start_time)
-            await session.refresh(source, ['included_sources_ids_rec'])
+            await session.refresh(source, ['included_source_ids_rec'])
             await session.commit()
-        wproc = WebSocketProcessor(self.socket, processor, source.included_sources_ids_rec, autoack=autoack)
+        wproc = WebSocketProcessor(self.socket, processor, source.included_source_ids_rec, autoack=autoack)
         self.processors[proc_name] = wproc
         # We're in the main thread; we want to run in the processor thread
         Dispatcher.dispatcher.portal.start_task_soon(WebSocketDispatcher.dispatcher.add_ws_processor, wproc)

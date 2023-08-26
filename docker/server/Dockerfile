@@ -8,14 +8,11 @@ RUN apt-get update && apt-get install -y \
             apt-utils \
             apt-transport-https \
             ca-certificates \
-            locales \
             python3 \
             python3-pip \
             python3-virtualenv \
             python3-setuptools \
-            git \
-            postgresql-client \
-            net-tools && \
+            postgresql-client && \
             apt-get upgrade
 WORKDIR /opt
 

@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import (INTERVAL, TIMESTAMP, ARRAY, insert)
 from pydantic import json, BaseModel
 from rdflib.namespace import XSD, RDF, RDFS
 
-from .. import make_scoped_session
+from .. import owner_scoped_session
 from . import dbTopicId, QName, PydanticURIRef
 from .models import Base, ProjectionMixin, ProjectionTable, Struct, schema_defines_table, Term, Topic
 from .schemas import (
@@ -100,7 +100,7 @@ def make_projections(schema: HkSchema, reload=False) -> List[Base]:
 async def read_existing_projections(reload=False) -> Tuple[List[HkSchema], List[Base]]:
     schemas: List[HkSchema] = []
     classes: List[Base] = []
-    async with make_scoped_session()() as session:
+    async with owner_scoped_session() as session:
         r = await session.execute(select(Struct).filter_by(subtype='hk_schema'))
         for (schema_struct, ) in r:
             schema = HkSchema.model_validate(schema_struct.value)
@@ -113,7 +113,7 @@ async def read_existing_projections(reload=False) -> Tuple[List[HkSchema], List[
 
 async def create_tables(schema: HkSchema, schema_struct_id: dbTopicId, overwrite: bool = False, session = None) -> List[Base]:
     if not session:
-        async with make_scoped_session()() as session:
+        async with owner_scoped_session() as session:
             r = await create_tables(schema, schema_struct_id, overwrite, session)
             await session.commit()
             return r
@@ -142,7 +142,7 @@ async def create_tables(schema: HkSchema, schema_struct_id: dbTopicId, overwrite
 
 async def process_schema(schema: HkSchema, schema_json: json, url: str, prefix: str, overwrite: bool=False, session=None) -> Struct:
     if session is None:
-        async with make_scoped_session()() as session:
+        async with owner_scoped_session() as session:
             s = await process_schema(schema, schema_json, url, prefix, overwrite, session)
             await session.commit()
             return s

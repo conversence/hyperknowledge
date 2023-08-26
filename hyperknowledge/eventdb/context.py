@@ -5,7 +5,6 @@ A lot of trickery to mix sync and async code.
 
 from typing import Optional, Set, Dict
 from threading import Thread
-from asyncio import current_task
 
 import anyio
 from sqlalchemy import select
@@ -19,7 +18,7 @@ from rdflib.plugins.shared.jsonld.keys import CONTEXT
 from rdflib.plugins.shared.jsonld.context import Context as rdfContext
 from rdflib.plugins.shared.jsonld.util import source_to_json, urljoin
 
-from .. import make_scoped_session
+from .. import owner_scoped_session
 from .models import Struct, Vocabulary
 
 class Context(rdfContext):
@@ -53,8 +52,8 @@ CONTEXT_CACHE: Dict[URIRef, Context] = {}
 async def fetch_context(url: URIRef):
     # This is being called from a thread, so we will create a new collection and scoped context
     # OR... should we use run_coroutine_threadsafe()? Hmmm... probably.
-    session_maker = make_scoped_session()
-    async with session_maker() as session:
+    async with owner_scoped_session() as session:
+        engine = session.bind
         vocab = await Vocabulary.ensure(session, url)
         r = await session.execute(select(Struct).filter_by(is_vocab=vocab.id, subtype='ld_context'))
         if context_struct := r.first():
@@ -64,8 +63,7 @@ async def fetch_context(url: URIRef):
             data = source_to_json(url)
             session.add(Struct(value=data, subtype='ld_context', is_vocab=vocab.id))
             await session.commit()
-    engine = next(iter(session_maker.registry.registry.values())).bind
-    session_maker.remove()
+    owner_scoped_session.remove()
     await engine.dispose()
     return data
 

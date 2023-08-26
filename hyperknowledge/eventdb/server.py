@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse
 from starlette.websockets import WebSocketDisconnect
 
 
-from .. import production, make_scoped_session
+from .. import production, owner_scoped_session, client_scoped_session
 from . import PydanticURIRef
 from .context import Context
 from .auth import agent_session, get_current_agent
@@ -130,7 +130,7 @@ async def populate_app(app: FastAPI, initial=False):
                     return model
             raise HTTPException(404, "Could not find the projection")
 
-    async with make_scoped_session()() as session:
+    async with owner_scoped_session() as session:
         for schema_type, (schema, pyd_model) in getProjectionSchemas().items():
             topic = await Topic.get_by_uri(session, schema_type)
             schema_id = await session.scalar(select(schema_defines_table.c.schema_id).filter(schema_defines_table.c.term_id==topic.id))

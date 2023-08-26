@@ -27,11 +27,13 @@ def engine_url(db=target_db, owner=True):
 def make_engine(db=target_db, owner=True):
     return create_async_engine(engine_url(db, owner))
 
-# We need an engine per thread, see https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#using-multiple-asyncio-event-loops
-owner_engine_registry = ScopedRegistry(make_engine, current_thread)
-client_engine_registry = ScopedRegistry(lambda: make_engine(owner=False), current_thread)
+def make_session_factory(owner=True):
+    return async_sessionmaker(make_engine(owner=owner), expire_on_commit=False)
 
-def make_scoped_session(owner=True):
-    engine = (owner_engine_registry if owner else client_engine_registry)()
-    async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    return async_scoped_session(async_session_factory, scopefunc=current_task)
+# We need an engine per thread, see https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#using-multiple-asyncio-event-loops
+owner_session_factory_registry = ScopedRegistry(make_session_factory, current_thread)
+client_session_factory_registry = ScopedRegistry(lambda: make_session_factory(owner=False), current_thread)
+
+
+owner_scoped_session = async_scoped_session(lambda: owner_session_factory_registry()(), scopefunc=current_task)
+client_scoped_session = async_scoped_session(lambda: client_session_factory_registry()(), scopefunc=current_task)

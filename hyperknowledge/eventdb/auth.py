@@ -13,7 +13,7 @@ from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 
-from .. import db_config_get, make_scoped_session
+from .. import db_config_get, client_scoped_session
 from .schemas import (BaseModel, AgentModel, AgentModelWithPw, AgentModelOptional)
 from .models import Agent
 
@@ -106,7 +106,7 @@ async def get_current_active_agent(
 
 
 async def get_token(username, password):
-    async with make_scoped_session(False)() as session:
+    async with client_scoped_session() as session:
         token = await session.scalar(select(func.get_token(username, password)))
         if token:
             await session.commit()   # Updating last_login
@@ -122,7 +122,7 @@ async def set_role(session, agent_name: str):
 
 @asynccontextmanager
 async def agent_session(agent: Optional[AgentModel]):
-    async with make_scoped_session(False)() as session:
+    async with client_scoped_session() as session:
         try:
             if agent:
                 await set_role(session, f"m_{agent.id}")

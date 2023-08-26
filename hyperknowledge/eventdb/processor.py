@@ -26,7 +26,7 @@ from py_mini_racer import MiniRacer
 from fastapi.websockets import WebSocket, WebSocketState
 from starlette.websockets import WebSocketDisconnect
 
-from .. import config, make_scoped_session, db_config_get
+from .. import config, owner_scoped_session, db_config_get
 from . import dbTopicId
 from .models import (
     Base, EventProcessor, Event, Source, Term, Topic, EventHandler
@@ -78,7 +78,7 @@ class AbstractProcessorQueue():
         self.last_seen = max(event_ts, self.last_seen or event_ts)
 
     async def fetch_events(self):
-        async with make_scoped_session()() as session:
+        async with owner_scoped_session() as session:
             if not self.started:
                 max_date_q = select(func.max(Event.created))
                 if self.source:
@@ -120,7 +120,7 @@ class AbstractProcessorQueue():
 
     async def ack_event(self, event: Event, session=None):
         if session is None and self.proc:
-            async with make_scoped_session()() as session:
+            async with owner_scoped_session() as session:
                 await self.ack_event(event, session)
                 await session.commit()
                 return
@@ -167,7 +167,7 @@ class PushProcessorQueue(AbstractProcessorQueue):
     async def run(self):
         while self.status < lifecycle.cancelling and not self.tg.cancel_scope.cancel_called:
             event = await self.get_event()
-            async with make_scoped_session()() as session:
+            async with owner_scoped_session() as session:
                 await self.process_event(event, session)
                 if self.autoack:
                     await self.ack_event(event, session)
@@ -322,7 +322,7 @@ class Dispatcher(AbstractProcessorQueue, Thread):
         assert proc.proc
         assert proc.proc.id not in self.active_processors
         self.active_processors[proc.proc.id] = proc
-        proc.start_processor(self.tg, make_scoped_session())
+        proc.start_processor(self.tg)
 
     def remove_processors(self, proc: AbstractProcessorQueue):
         assert proc.proc
@@ -354,7 +354,7 @@ class Dispatcher(AbstractProcessorQueue, Thread):
 
 
     async def setup_main_processors(self):
-        async with make_scoped_session()() as session:
+        async with owner_scoped_session() as session:
             projection_processor = await session.get(EventProcessor, 0)
             await session.refresh(projection_processor, ['source'])
         self.projection_processor = ProjectionProcessor(projection_processor)
@@ -497,7 +497,7 @@ class WebSocketHandler():
         if proc_name in self.processors:
             return
         # sessionmaker?
-        async with make_scoped_session()() as session:
+        async with owner_scoped_session() as session:
             q = select(EventProcessor).filter_by(owner_id=self.agent.id)
             if proc_name:
                 q = q.filter_by(name=proc_name)
@@ -533,7 +533,7 @@ class WebSocketHandler():
 
     async def delete_processor(self, proc_name: str):
         await self.mute(proc_name)
-        async with make_scoped_session()() as session:
+        async with owner_scoped_session() as session:
             r = await session.execute(
                 delete(EventProcessor).where(owner_id=self.agent.id, name=proc_name))
             session.commit()

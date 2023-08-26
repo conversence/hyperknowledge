@@ -52,17 +52,15 @@ def init_database(sqla_engine, ini_file):
 
 @pytest.fixture(scope="function")
 async def clean_tables():
-    from hyperknowledge import make_scoped_session
+    from hyperknowledge import owner_scoped_session
     from hyperknowledge.eventdb.models import delete_data
-    session_maker = make_scoped_session()
-    async with session_maker() as session:
+    async with owner_scoped_session() as session:
         await delete_data(session)
-    session_maker.remove()
+    owner_scoped_session.remove()
     yield True
-    session_maker = make_scoped_session()
-    async with session_maker() as session:
+    async with owner_scoped_session() as session:
         await delete_data(session)
-    session_maker.remove()
+    owner_scoped_session.remove()
 
 
 @pytest.fixture(scope="module")

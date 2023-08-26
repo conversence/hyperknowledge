@@ -31,6 +31,7 @@ RUN python3 -mvirtualenv venv && \
 
 # copy files needed for setup and running
 COPY ./deploy /opt/hyperknowledge/deploy
+COPY ./revert /opt/hyperknowledge/revert
 COPY ./hyperknowledge /opt/hyperknowledge/hyperknowledge
 COPY ./scripts /opt/hyperknowledge/scripts
 

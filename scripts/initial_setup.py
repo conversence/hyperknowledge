@@ -50,7 +50,7 @@ def get_conn_params(host="localhost", user=None, password=None, sudo=None, **kwa
         user = user or "postgres"
         sudo = True if sudo is None and password is None else sudo or False
     try:
-        # try without passwordord
+        # try without password
         test_db_exists(
             "postgres", user=user, host=host, password=password, sudo=sudo, **kwargs
         )

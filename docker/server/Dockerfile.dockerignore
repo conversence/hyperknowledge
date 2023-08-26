@@ -3,6 +3,7 @@
 
 # Allow these files and directories
 !/deploy
+!/revert
 !/hyperknowledge
 !/scripts
 !/pyproject.toml

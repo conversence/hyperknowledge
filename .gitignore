@@ -8,3 +8,6 @@ doc/autodoc
 venv
 node_modules
 *.egg
+*.egg-info
+./build
+./.lsp

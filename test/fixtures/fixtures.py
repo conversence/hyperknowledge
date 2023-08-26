@@ -50,23 +50,19 @@ def init_database(sqla_engine, ini_file):
     )
 
 
-@pytest.fixture()
-async def session_maker(sqla_engine):
-    """
-    Fixture that returns a SQLAlchemy session_maker
-    """
-    from hyperknowledge import make_session
-    return make_session()
-
-
 @pytest.fixture(scope="function")
-async def clean_tables(session_maker):
+async def clean_tables():
+    from hyperknowledge import make_scoped_session
     from hyperknowledge.eventdb.models import delete_data
+    session_maker = make_scoped_session()
     async with session_maker() as session:
         await delete_data(session)
-    yield session_maker
+    session_maker.remove()
+    yield True
+    session_maker = make_scoped_session()
     async with session_maker() as session:
         await delete_data(session)
+    session_maker.remove()
 
 
 @pytest.fixture(scope="module")

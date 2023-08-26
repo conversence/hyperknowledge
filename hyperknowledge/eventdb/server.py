@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse
 from starlette.websockets import WebSocketDisconnect
 
 
-from .. import ClientSession, Session, production
+from .. import production, make_scoped_session
 from . import PydanticURIRef
 from .context import Context
 from .auth import agent_session, get_current_agent
@@ -90,6 +90,8 @@ async def populate_app(app: FastAPI, initial=False):
             event_type = await Term.ensure(session, type_term, None, prefix)
             # Get the event's schema
             await session.refresh(event_type, ['schema'])
+            if not event_type.schema:
+                raise HTTPException(400, f"Event type {event.data.type} has no schema defined")
             hk_schema = HkSchema.model_validate(event_type.schema.value)
             event_schema = hk_schema.eventSchemas[type_term]
             # If we are supposed to create a resource, now is a good time to do so
@@ -128,7 +130,7 @@ async def populate_app(app: FastAPI, initial=False):
                     return model
             raise HTTPException(404, "Could not find the projection")
 
-    async with Session() as session:
+    async with make_scoped_session()() as session:
         for schema_type, (schema, pyd_model) in getProjectionSchemas().items():
             topic = await Topic.get_by_uri(session, schema_type)
             schema_id = await session.scalar(select(schema_defines_table.c.schema_id).filter(schema_defines_table.c.term_id==topic.id))

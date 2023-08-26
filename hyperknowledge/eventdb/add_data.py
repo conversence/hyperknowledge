@@ -10,7 +10,7 @@ import grequests
 from yaml import safe_load
 from sqlalchemy import select
 
-from .. import Session, make_session
+from .. import make_scoped_session
 from .models import Struct, EventHandler, Term, Vocabulary, schema_defines_table
 from .schemas import HkSchema, EventHandlerSchemas
 from .make_tables import process_schema
@@ -35,7 +35,7 @@ async def read_struct(url: str, fname: Union[str, Path, None]=None):
 async def add_schema(url: str, prefix: str, fname: Path=None, overwrite: bool=False):
     jsonf = await read_struct(url, fname)
     schema = HkSchema.model_validate(jsonf)
-    async with Session() as session:
+    async with make_scoped_session()() as session:
         db_schema = await Struct.ensure(session, jsonf, 'hk_schema', url, prefix)
         # Ensure all the terms
         await process_schema(schema, jsonf, url, prefix, overwrite, session)
@@ -46,7 +46,7 @@ async def add_schema(url: str, prefix: str, fname: Path=None, overwrite: bool=Fa
 async def add_handlers(url: str, fname: Path=None, overwrite=False):
     jsonf = await read_struct(url, fname)
     schema = EventHandlerSchemas.model_validate(jsonf)
-    async with Session() as session:
+    async with make_scoped_session()() as session:
         for handler in schema.handlers:
             event_prefix, event_term = schema.context.shrink_iri(handler.event_type).split(":")
             event_voc = schema.context.expand(f"{event_prefix}:")
@@ -74,7 +74,7 @@ async def add_context_data(url: str, fname: Path=None, overwrite: bool = False):
     data = await read_struct(url, fname)
     # First make sure it's valid
     ld_context = Context(data, base=url)
-    async with Session() as session:
+    async with make_scoped_session()() as session:
         vocab = await Vocabulary.ensure(session, url)
         r = await session.execute(select(Struct).filter_by(is_vocab=vocab.id, subtype='ld_context'))
         if context_struct := r.first():

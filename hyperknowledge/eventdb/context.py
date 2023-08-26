@@ -53,17 +53,21 @@ CONTEXT_CACHE: Dict[URIRef, Context] = {}
 async def fetch_context(url: URIRef):
     # This is being called from a thread, so we will create a new collection and scoped context
     # OR... should we use run_coroutine_threadsafe()? Hmmm... probably.
-    Session = make_scoped_session(current_task)
-    async with Session() as session:
+    session_maker = make_scoped_session()
+    async with session_maker() as session:
         vocab = await Vocabulary.ensure(session, url)
         r = await session.execute(select(Struct).filter_by(is_vocab=vocab.id, subtype='ld_context'))
         if context_struct := r.first():
-            return context_struct[0].value
-        # TODO: wrap in async? in thread?
-        data = source_to_json(url)
-        session.add(Struct(value=data, subtype='ld_context', is_vocab=vocab.id))
-        await session.commit()
-        return data
+            data = context_struct[0].value
+        else:
+            # TODO: wrap in async? in thread?
+            data = source_to_json(url)
+            session.add(Struct(value=data, subtype='ld_context', is_vocab=vocab.id))
+            await session.commit()
+    engine = next(iter(session_maker.registry.registry.values())).bind
+    session_maker.remove()
+    await engine.dispose()
+    return data
 
 
 def get_context_data(url: URIRef):
@@ -71,8 +75,7 @@ def get_context_data(url: URIRef):
     result = None
     def work():
         nonlocal result
-        with anyio.from_thread.start_blocking_portal() as portal:
-            result = portal.call(fetch_context, url)
+        result = anyio.run(fetch_context, url)
     t = Thread(target=work)
     t.start()
     t.join()

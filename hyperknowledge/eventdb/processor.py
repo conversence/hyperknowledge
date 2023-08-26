@@ -26,7 +26,7 @@ from py_mini_racer import MiniRacer
 from fastapi.websockets import WebSocket, WebSocketState
 from starlette.websockets import WebSocketDisconnect
 
-from .. import config, make_scoped_session, db_config_get, Session
+from .. import config, make_scoped_session, db_config_get
 from . import dbTopicId
 from .models import (
     Base, EventProcessor, Event, Source, Term, Topic, EventHandler
@@ -78,7 +78,7 @@ class AbstractProcessorQueue():
         self.last_seen = max(event_ts, self.last_seen or event_ts)
 
     async def fetch_events(self):
-        async with self.session_maker() as session:
+        async with make_scoped_session()() as session:
             if not self.started:
                 max_date_q = select(func.max(Event.created))
                 if self.source:
@@ -120,7 +120,7 @@ class AbstractProcessorQueue():
 
     async def ack_event(self, event: Event, session=None):
         if session is None and self.proc:
-            async with self.session_maker() as session:
+            async with make_scoped_session()() as session:
                 await self.ack_event(event, session)
                 await session.commit()
                 return
@@ -139,9 +139,8 @@ class AbstractProcessorQueue():
             assert event_time == self.in_process.created
         await self.ack_event(self.in_process)
 
-    def start_processor(self, tg: anyio.abc.TaskGroup, session_maker):
+    def start_processor(self, tg: anyio.abc.TaskGroup):
         self.tg = tg
-        self.session_maker = session_maker
         self.status = lifecycle.started
 
     def stop_processor(self):
@@ -156,8 +155,8 @@ class PushProcessorQueue(AbstractProcessorQueue):
         self.autoack = autoack
         self.ack_wait_event = None
 
-    async def start_processor(self, tg: anyio.abc.TaskGroup, session_maker):
-        super(PushProcessorQueue, self).start_processor(tg, session_maker)
+    async def start_processor(self, tg: anyio.abc.TaskGroup):
+        super(PushProcessorQueue, self).start_processor(tg)
         tg.start_soon(self.run)
 
     async def ack_event(self, event: Event, session=None):
@@ -168,7 +167,7 @@ class PushProcessorQueue(AbstractProcessorQueue):
     async def run(self):
         while self.status < lifecycle.cancelling and not self.tg.cancel_scope.cancel_called:
             event = await self.get_event()
-            async with self.session_maker() as session:
+            async with make_scoped_session()() as session:
                 await self.process_event(event, session)
                 if self.autoack:
                     await self.ack_event(event, session)
@@ -323,7 +322,7 @@ class Dispatcher(AbstractProcessorQueue, Thread):
         assert proc.proc
         assert proc.proc.id not in self.active_processors
         self.active_processors[proc.proc.id] = proc
-        proc.start_processor(self.tg, self.session_maker)
+        proc.start_processor(self.tg, make_scoped_session())
 
     def remove_processors(self, proc: AbstractProcessorQueue):
         assert proc.proc
@@ -333,6 +332,8 @@ class Dispatcher(AbstractProcessorQueue, Thread):
 
     async def main_task(self) -> None:
         # Running in thread's event loop
+        task = asyncio.current_task()
+        task.get_loop().name = 'dispatcher_loop'
         # TODO: Replace with the engine's connection, maybe?
         self.listener = asyncpg_listen.NotificationListener(
             asyncpg_listen.connect_func(
@@ -345,7 +346,6 @@ class Dispatcher(AbstractProcessorQueue, Thread):
             self.portal = portal
             async with anyio.create_task_group() as tg:
                 self.tg = tg
-                self.session_maker = make_scoped_session(asyncio.current_task)
                 self.set_status(lifecycle.started)
                 await self.setup_main_processors()
                 tg.start_soon(self.do_listen)
@@ -354,13 +354,13 @@ class Dispatcher(AbstractProcessorQueue, Thread):
 
 
     async def setup_main_processors(self):
-        async with self.session_maker() as session:
+        async with make_scoped_session()() as session:
             projection_processor = await session.get(EventProcessor, 0)
             await session.refresh(projection_processor, ['source'])
         self.projection_processor = ProjectionProcessor(projection_processor)
-        self.tg.start_soon(self.projection_processor.start_processor, self.tg, self.session_maker)
+        self.tg.start_soon(self.projection_processor.start_processor, self.tg)
         self.websocket_processor = WebSocketDispatcher()
-        self.tg.start_soon(self.websocket_processor.start_processor, self.tg, self.session_maker)
+        self.tg.start_soon(self.websocket_processor.start_processor, self.tg)
         self.last_processed = self.projection_processor.last_processed
 
     async def do_listen(self):
@@ -429,7 +429,7 @@ class WebSocketDispatcher(PushProcessorQueue):
         for source_id in wproc.source_set:
             assert not self.by_source[source_id].get((wproc.proc.owner_id, wproc.proc.name)), "Do not listen to a single processor from two sockets"
             self.by_source[source_id][(wproc.proc.owner_id, wproc.proc.name)] = wproc
-        self.tg.start_soon(wproc.start_processor, self.tg, self.session_maker)
+        self.tg.start_soon(wproc.start_processor, self.tg)
 
     def remove_ws_processor(self, wproc: WebSocketProcessor):
         for source_id in wproc.source_set:
@@ -464,7 +464,7 @@ class WebSocketProcessor(PushProcessorQueue):
         # What about context?
         # Here we're on the processor thread, ideally we'd want this to run in main event loop that has the actual socket
         # main_portal.start_task_soon(self.socket.send_text, event_data.model_dump_json())
-        await self.socket.send_text(event_data.model_dump_json())
+        await self.socket.send_text(event_data.model_dump_json(by_alias=True))
 
     # async def fetch_events(self):
     #     # Big problem: Which past events have been processed?
@@ -496,7 +496,8 @@ class WebSocketHandler():
         assert proc_name or source_name
         if proc_name in self.processors:
             return
-        async with Session() as session:
+        # sessionmaker?
+        async with make_scoped_session()() as session:
             q = select(EventProcessor).filter_by(owner_id=self.agent.id)
             if proc_name:
                 q = q.filter_by(name=proc_name)
@@ -532,7 +533,7 @@ class WebSocketHandler():
 
     async def delete_processor(self, proc_name: str):
         await self.mute(proc_name)
-        async with Session() as session:
+        async with make_scoped_session()() as session:
             r = await session.execute(
                 delete(EventProcessor).where(owner_id=self.agent.id, name=proc_name))
             session.commit()

@@ -12,6 +12,8 @@ CREATE SEQUENCE IF NOT EXISTS public.topic_id_seq
 
 CREATE TYPE public.permission AS ENUM (
     'add_schema',
+    'update_schema',
+    'redefine_prefix',
     'add_source',
     'add_handler',
     'admin'

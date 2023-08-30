@@ -128,7 +128,7 @@ async def populate_app(app: FastAPI, initial=False):
         return event
 
     def define_projection_getter(topic, schema, db_model, pyd_model):
-        @app.get("/source/{source_name}/topic/{entity_id}/"+f"{topic.vocabulary.prefix}:{schema.name}")
+        @app.get("/source/{source_name}/topic/{entity_id}/"+f"{topic.vocabulary.current_prefix}:{schema.name}")
         async def get_projection(source_name: str, entity_id: str, request: Request, response: Response, current_agent: CurrentAgentType) -> pyd_model:
             async with agent_session(current_agent) as session:
                 q = select(db_model).filter_by(obsolete=None).join(UUIDentifier).filter_by(value=entity_id).join(Source, db_model.source_id==Source.id).filter_by(local_name=source_name)
@@ -260,7 +260,7 @@ async def add_remote_source(model: RemoteSourceModel, response: Response, curren
             raise HTTPException(400, "Remote sources cannot have a local name")
         if not source.uri:
             raise HTTPException(400, "Remote sources need a URI")
-        source = await Source.ensure(session, model.uri, None, model.prefix)
+        source = await Source.ensure(session, model.uri, None)
         await session.commit()
         response.status_code = status.HTTP_201_CREATED
         response.headers["Location"] = f"/remote_source/{source.id}"
@@ -482,7 +482,7 @@ async def add_schema(schema: HkSchema, request: Request, response: Response, cur
 @app.get("/schema")
 async def get_schema_ids_and_prefixes(current_agent: CurrentAgentType) -> List[Tuple[int, str]]:
     async with agent_session(current_agent) as session:
-        r = await session.execute(select(Struct.id, Vocabulary.prefix).filter_by(subtype='hk_schema').join(Struct.as_voc))
+        r = await session.execute(select(Struct.id, Vocabulary.current_prefix).filter_by(subtype='hk_schema').join(Struct.as_voc))
         return r.all()
 
 
@@ -518,8 +518,8 @@ async def delete_schema(schema_id: int, current_agent: CurrentActiveAgentType):
 @app.get("/schema/p/{prefix}")
 async def get_schema_by_prefix(prefix: str, current_agent: CurrentAgentType) -> List[HkSchema]:
     async with agent_session(current_agent) as session:
-        r = await session.execute(select(Struct).filter_by(subtype='hk_schema').join(Struct.as_voc).filter_by(prefix=prefix))
-        # TODO: What if there's more than one? There may be a design mistake here.
+        # TODO: Time travel
+        r = await session.execute(select(Struct).filter_by(subtype='hk_schema', current_prefix=prefix))
         schemas = [s for (s,) in r]
         models = [HkSchema.model_validate(s.value) for s in schemas]
         for i, s in enumerate(schemas):

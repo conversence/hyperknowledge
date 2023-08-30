@@ -31,7 +31,7 @@ CREATE OR REPLACE FUNCTION public.ensure_source(
     test BOOLEAN;
     included_id BIGINT;
   BEGIN
-    SELECT ensure_vocabulary(url, NULL) INTO source_url_id STRICT;
+    SELECT ensure_vocabulary(url) INTO source_url_id STRICT;
     SELECT id INTO source_id FROM source WHERE id=source_url_id;
     IF source_id IS NULL THEN
       -- check that the included source_ids exist, and that we have read access

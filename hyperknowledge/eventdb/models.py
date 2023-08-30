@@ -59,6 +59,8 @@ event_handler_language = ENUM(
 
 permission = ENUM(
     'add_schema',
+    'update_schema',
+    'redefine_prefix',
     'add_source',
     'add_handler',
     'admin',
@@ -141,6 +143,15 @@ class ensure_vocabulary(GenericFunction):
     inherit_cache = True
 
 
+class PrefixVocHistory(Base):
+    __tablename__ = 'prefix_voc_history'
+    prefix: Mapped[String] = mapped_column(String, primary_key=True)
+    added: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP, primary_key=True, default="statement_timestamp() AT TIME ZONE 'UTC'")
+    voc_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey("vocabulary.id"))
+
+    vocabulary: Mapped[Vocabulary] = relationship("Vocabulary", foreign_keys=voc_id, back_populates="prefix_history")
+
+
 class Vocabulary(Topic):
     __tablename__ = 'vocabulary'
     __mapper_args__ = {
@@ -148,11 +159,14 @@ class Vocabulary(Topic):
     }
     id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Topic.id), primary_key=True)
     uri: Mapped[String] = mapped_column(String, nullable=False, unique=True)
-    prefix: Mapped[String] = mapped_column(String, unique=True)
+    # prefix: Mapped[String] = mapped_column(String, unique=True)
+
+    prefix_history: Mapped[List[PrefixVocHistory]] = relationship(PrefixVocHistory, back_populates="vocabulary")
+    current_prefix: Mapped[PrefixVocHistory] = column_property(select(PrefixVocHistory.prefix).filter(PrefixVocHistory.voc_id==id).order_by(PrefixVocHistory.added.desc()).limit(1))
 
     @classmethod
-    async def ensure(cls, session, vocabulary, prefix=None) -> Vocabulary:
-        id_ = await session.scalar(ensure_vocabulary(vocabulary, prefix))
+    async def ensure(cls, session, vocabulary) -> Vocabulary:
+        id_ = await session.scalar(ensure_vocabulary(vocabulary))
         await session.flush()
         return await session.get(cls, id_)
 
@@ -247,6 +261,14 @@ class ensure_struct(GenericFunction):
     type = dbTopicId
     inherit_cache = True
 
+class PrefixSchemaHistory(Base):
+    __tablename__ = 'prefix_schema_history'
+    prefix: Mapped[String] = mapped_column(String, primary_key=True)
+    added: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP, primary_key=True, default="statement_timestamp() AT TIME ZONE 'UTC'")
+    schema_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey("struct.id"))
+
+    vocabulary: Mapped[Struct] = relationship("Struct", foreign_keys=schema_id, back_populates="prefix_history")
+
 
 class Struct(Topic):
     __tablename__ = 'struct'
@@ -266,6 +288,8 @@ class Struct(Topic):
     data_schema: Mapped[Topic] = relationship(Topic, primaryjoin=remote(Topic.id) == foreign(data_schema_id))
     as_voc: Mapped[Vocabulary] = relationship(Vocabulary, primaryjoin=remote(Topic.id) == foreign(is_vocab))
     terms: Mapped[List[Term]] = relationship(Term, secondary=schema_defines_table, back_populates='schema')
+    prefix_history: Mapped[List[PrefixSchemaHistory]] = relationship(PrefixSchemaHistory, back_populates="vocabulary")
+    current_prefix: Mapped[PrefixSchemaHistory] = column_property(select(PrefixSchemaHistory.prefix).filter(PrefixSchemaHistory.schema_id==id).order_by(PrefixSchemaHistory.added.desc()).limit(1))
 
     @classmethod
     async def ensure(cls, session, value: JSONB, subtype: struct_type='other', url: str=None, prefix: str=None, schema_type: str=None) -> Struct:

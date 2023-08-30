@@ -1,6 +1,7 @@
 -- Deploy topic_functions
 -- requires: identifiers
 -- requires: valueobjects
+-- requires: context_history
 -- idempotent
 
 BEGIN;
@@ -27,6 +28,10 @@ GRANT SELECT ON TABLE public.schema_defines TO :dbm;
 GRANT SELECT ON TABLE public.schema_defines to :dbc;
 GRANT USAGE ON SEQUENCE public.topic_id_seq to :dbm;
 GRANT USAGE ON SEQUENCE public.topic_id_seq to :dbc;
+GRANT SELECT ON TABLE public.prefix_voc_history to :dbc;
+GRANT SELECT,INSERT, UPDATE ON TABLE public.prefix_voc_history TO :dbm;
+GRANT SELECT ON TABLE public.prefix_schema_history to :dbc;
+GRANT SELECT,INSERT, UPDATE ON TABLE public.prefix_schema_history TO :dbm;
 
 
 CREATE OR REPLACE FUNCTION public.after_create_langstring() RETURNS trigger
@@ -84,29 +89,64 @@ $$;
 DROP TRIGGER IF EXISTS after_create_term ON public.term;
 CREATE TRIGGER after_create_term AFTER INSERT ON public.term FOR EACH ROW EXECUTE FUNCTION public.after_create_term();
 
-CREATE OR REPLACE FUNCTION ensure_vocabulary(vocabulary_ varchar, prefix_ varchar DEFAULT NULL) RETURNS BIGINT
+CREATE OR REPLACE FUNCTION ensure_vocabulary(vocabulary_ varchar) RETURNS BIGINT
   LANGUAGE plpgsql AS $$
   DECLARE
     voc_id BIGINT;
     voc_prefix varchar;
   BEGIN
     -- start with query to avoid hitting the sequence
-    SELECT id, prefix INTO voc_id, voc_prefix FROM public.vocabulary WHERE uri = vocabulary_;
+    SELECT id INTO voc_id FROM public.vocabulary WHERE uri = vocabulary_;
     IF voc_id IS NULL THEN
       -- upsert
       set constraints vocabulary_id_fkey deferred;
-      INSERT INTO public.vocabulary (uri, prefix) VALUES (vocabulary_, prefix_)
+      INSERT INTO public.vocabulary (uri) VALUES (vocabulary_)
         ON CONFLICT (uri) DO NOTHING
         RETURNING id INTO voc_id;
-    ELSE
-      IF prefix_ IS NOT NULL AND (prefix_ != voc_prefix) OR voc_prefix IS NULL THEN
-        IF voc_prefix IS NOT NULL THEN
-          RAISE WARNING 'Changing a non null prefix';
-        END IF;
-        UPDATE public.vocabulary SET prefix = prefix_ WHERE id=voc_id;
-      END IF;
     END IF;
     RETURN voc_id;
+  END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.set_voc_prefix(prefix_ varchar, vocabulary_id_ bigint, allow_redefine BOOLEAN DEFAULT false)
+RETURNS void LANGUAGE plpgsql AS $$
+  DECLARE
+    last_defined TIMESTAMP WITHOUT TIME ZONE DEFAULT NULL;
+    last_voc_id BIGINT;
+  BEGIN
+    SELECT added, voc_id INTO last_defined, last_voc_id FROM public.prefix_voc_history WHERE voc_id = vocabulary_id_ ORDER BY added DESC LIMIT 1;
+    IF last_defined IS NOT NULL THEN
+      IF last_voc_id = vocabulary_id_ THEN
+        RETURN;
+      END IF;
+      IF allow_redefine AND NOT has_permission('redefine_prefix') THEN
+        RAISE EXCEPTION 'Cannot override existing prefix without permission';
+      END IF;
+      IF NOT allow_redefine THEN
+        RAISE EXCEPTION 'Prefix already defined for another vocabulary';
+      END IF;
+    END IF;
+    INSERT INTO public.prefix_voc_history (voc_id, prefix) VALUES (vocabulary_id_, prefix_);
+  END;
+$$;
+
+
+CREATE OR REPLACE FUNCTION public.set_schema_prefix(prefix_ varchar, schema_id_ bigint)
+RETURNS void LANGUAGE plpgsql AS $$
+  DECLARE
+    last_defined TIMESTAMP WITHOUT TIME ZONE DEFAULT NULL;
+    last_schema_id BIGINT;
+  BEGIN
+    SELECT added, schema_id INTO last_defined, last_schema_id FROM public.prefix_schema_history WHERE schema_id = schema_id_ ORDER BY added DESC LIMIT 1;
+    IF last_defined IS NOT NULL THEN
+      IF last_schema_id = schema_id_ THEN
+        RETURN;
+      END IF;
+      IF NOT has_permission('update_schema') THEN
+        RAISE EXCEPTION 'Cannot update schema ';
+      END IF;
+    END IF;
+    INSERT INTO public.prefix_schema_history (schema_id, prefix) VALUES (schema_id_, prefix_);
   END;
 $$;
 
@@ -131,21 +171,21 @@ $$;
 CREATE OR REPLACE FUNCTION ensure_term(term_ varchar, vocabulary varchar DEFAULT NULL, prefix varchar DEFAULT NULL) RETURNS BIGINT
    LANGUAGE plpgsql AS $$
   DECLARE
-    voc_id BIGINT;
+    voc_id_ BIGINT;
   BEGIN
     IF vocabulary IS NOT NULL THEN
-      SELECT ensure_vocabulary(vocabulary, prefix) INTO voc_id STRICT;
+      SELECT ensure_vocabulary(vocabulary) INTO voc_id_ STRICT;
     ELSE
       IF prefix IS NOT NULL THEN
-        SELECT id INTO voc_id STRICT FROM vocabulary WHERE vocabulary.prefix = ensure_term.prefix;
+        SELECT voc_id INTO voc_id_ STRICT FROM prefix_voc_history WHERE prefix_voc_history.prefix = ensure_term.prefix ORDER BY added DESC LIMIT 1;
       END IF;
     END IF;
-    RETURN ensure_term_with_voc(term_, voc_id);
+    RETURN ensure_term_with_voc(term_, voc_id_);
   END;
 $$;
 
 
-CREATE OR REPLACE FUNCTION ensure_term_url(url varchar, prefix varchar DEFAULT NULL) RETURNS BIGINT
+CREATE OR REPLACE FUNCTION ensure_term_url(url varchar) RETURNS BIGINT
   LANGUAGE plpgsql AS $$
   DECLARE
     components text[];
@@ -154,7 +194,7 @@ CREATE OR REPLACE FUNCTION ensure_term_url(url varchar, prefix varchar DEFAULT N
     IF components IS NULL THEN
       RETURN ensure_term(url);
     ELSE
-      RETURN ensure_term(components[1], components[0], prefix);
+      RETURN ensure_term(components[1], components[0]);
     END IF;
   END;
 $$;
@@ -262,7 +302,7 @@ $$;
 DROP TRIGGER IF EXISTS after_create_struct ON public.struct;
 CREATE TRIGGER after_create_struct AFTER INSERT ON public.struct FOR EACH ROW EXECUTE FUNCTION public.after_create_struct();
 
-CREATE OR REPLACE FUNCTION public.ensure_struct(data JSONB, type_ struct_type='other', url VARCHAR=NULL, prefix varchar=NULL, data_schema_url VARCHAR=NULL) RETURNS BIGINT
+CREATE OR REPLACE FUNCTION public.ensure_struct(data JSONB, type_ struct_type='other', url VARCHAR=NULL, prefix varchar=NULL, data_schema_url VARCHAR=NULL, replace_prefix BOOLEAN=false) RETURNS BIGINT
   LANGUAGE plpgsql AS $$
   DECLARE
     hash_ bytea;
@@ -271,9 +311,12 @@ CREATE OR REPLACE FUNCTION public.ensure_struct(data JSONB, type_ struct_type='o
     schema_id BIGINT = NULL;
   BEGIN
     SELECT sha256(data::text::bytea) INTO hash_ STRICT;
-    SELECT id INTO id_ FROM binary_data WHERE hash = hash_;
+    SELECT id INTO id_ FROM public.struct WHERE hash = hash_;
     IF url IS NOT NULL THEN
-      SELECT ensure_vocabulary(url, prefix) INTO url_id STRICT;
+      SELECT ensure_vocabulary(url) INTO url_id STRICT;
+    END IF;
+    IF prefix IS NOT NULL THEN
+      PERFORM set_voc_prefix(prefix, url_id, replace_prefix);
     END IF;
     IF data_schema_url IS NOT NULL THEN
       SELECT get_term_url(data_schema_url) INTO schema_id STRICT;
@@ -282,6 +325,9 @@ CREATE OR REPLACE FUNCTION public.ensure_struct(data JSONB, type_ struct_type='o
       INSERT INTO public.struct (value, subtype, is_vocab, data_schema_id) VALUES (data, type_, url_id, schema_id)
         ON CONFLICT (hash, coalesce(data_schema_id, -1)) DO UPDATE SET subtype = type_, data_schema_id = schema_id, is_vocab=url_id
         RETURNING id INTO id_;
+    END IF;
+    IF prefix IS NOT NULL AND type_ = 'hk_schema' THEN
+      PERFORM set_schema_prefix(prefix, id_);
     END IF;
     return id_;
   END;

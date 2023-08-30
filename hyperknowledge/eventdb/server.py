@@ -11,7 +11,7 @@ from pydantic import ConfigDict, BaseModel
 from sqlalchemy import select, text, delete
 from sqlalchemy.sql.functions import func
 from sqlalchemy.sql.expression import and_
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, aliased
 from fastapi import FastAPI, HTTPException, Request, Depends, status, Response, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.websockets import WebSocket
@@ -55,7 +55,14 @@ async def populate_app(app: FastAPI, initial=False):
             limit: int=50, after: datetime=None) -> List[EventSchema]:
         ev_class = getEventModel()
         async with agent_session(current_agent) as session:
-            q = select(Event).join(Source).filter_by(local_name=source_name).order_by(Event.created).options(joinedload(Event.creator), joinedload(Event.source))
+            target_source = aliased(Source, name="target_s")
+            event_source = aliased(Source, name="event_s")
+            q = select(Event
+                ).join(event_source, Event.source
+                ).join(target_source, event_source.including_sources_rec
+                ).filter_by(local_name=source_name
+                ).order_by(Event.created
+                ).options(joinedload(Event.creator), joinedload(Event.source))
             if after:
                 q = q.filter(Event.created > after)
             events = await session.execute(q.limit(limit))

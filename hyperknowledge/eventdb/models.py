@@ -328,6 +328,7 @@ source_inclusion_table = Table(
 )
 
 class including_sources(GenericFunction):
+    inherit_cache = True
     type: List[dbTopicId]
 
 class Source(Vocabulary):

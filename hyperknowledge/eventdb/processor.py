@@ -16,7 +16,7 @@ import asyncio
 from json import JSONDecodeError
 
 import anyio
-from anyio.from_thread import start_blocking_portal, BlockingPortal
+from anyio.from_thread import BlockingPortal
 import asyncpg_listen
 from pydantic import Json, BaseModel
 from sqlalchemy import select, update, delete

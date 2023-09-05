@@ -108,6 +108,7 @@ async def populate_app(app: FastAPI, initial=False):
                     if attrib.create and not getattr(event.data, attrib.name):
                         resourceName = await UUIDentifier.ensure(session)
                         # TODO: Check if the type is a projection type
+                        # Note that, since create is true, the range is not a union tuple
                         range_prefix, range_term = hk_schema.context.shrink_iri(attrib.range).split(':')
                         resourceType = await Term.ensure(session, range_term, None, range_prefix)
                         resourceName.has_projections = [resourceType.id]

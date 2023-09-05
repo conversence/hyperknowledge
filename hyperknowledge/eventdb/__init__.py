@@ -18,3 +18,8 @@ SchemaElementFull = PydanticURIRef
 SchemaElement = QName
 UserId = Name
 dbTopicId = BIGINT
+
+def as_list(val):
+    if isinstance(val, (tuple, list)):
+        return val
+    return [val]

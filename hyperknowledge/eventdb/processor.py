@@ -27,7 +27,7 @@ from fastapi.websockets import WebSocket, WebSocketState
 from starlette.websockets import WebSocketDisconnect
 
 from .. import config, owner_scoped_session, db_config_get
-from . import dbTopicId
+from . import dbTopicId, as_list
 from .models import (
     Base, EventProcessor, Event, Source, Term, Topic, EventHandler
 )
@@ -168,7 +168,12 @@ class PushProcessorQueue(AbstractProcessorQueue):
         while self.status < lifecycle.cancelling and not self.tg.cancel_scope.cancel_called:
             event = await self.get_event()
             async with owner_scoped_session() as session:
-                await self.process_event(event, session)
+                try:
+                    await self.process_event(event, session)
+                except Exception as e:
+                    log.exception(e)
+                    import pdb
+                    pdb.post_mortem()
                 if self.autoack:
                     await self.ack_event(event, session)
                     await session.commit()
@@ -207,32 +212,34 @@ class ProjectionProcessor(PushProcessorQueue):
         hk_schema = HkSchema.model_validate(db_event.event_type.schema.value)
         event_type = hk_schema.context.shrink_iri(event.data.type)
         event_hk_schema = hk_schema.eventSchemas[event.data.type.split(':')[1]]
-        db_model_by_role: Dict[str, type[Base]] = {}
-        projection_model_by_role: Dict[str, BaseModel] = {}
         projection_schemas = getProjectionSchemas()
-        schemas_by_role: Dict[str, ProjectionSchema] = {}
-        topic_id_by_role: Dict[str, dbTopicId] = {}
+        range_schemas_by_role: Dict[str, List[Tuple[ProjectionSchema, BaseModel, type[Base]]]] = {}
+        topic_by_role: Dict[str, dbTopicId] = {}
         attrib_schema_by_name: Dict[str, EventAttributeSchema] = {}
         for attrib_schema in event_hk_schema.attributes:
             attrib_schema_by_name[attrib_schema.name] = attrib_schema
             value = getattr(event.data, attrib_schema.name)
             if not value:
                 continue
-            range_schema, range_model = projection_schemas.get(attrib_schema.range, (None, None))
-            projection_model_by_role[attrib_schema.name] = range_model
-            if not range_schema:
+            projection_data: List[Tuple[ProjectionSchema, BaseModel, type[Base]]] = []
+            for range in as_list(attrib_schema.range):
+                range_schema, range_model = projection_schemas.get(range, (None, None))
+                if not range_schema:
+                    continue
+                range_db_model = KNOWN_DB_MODELS.get(range_schema.type)
+                if not range_db_model:
+                    log.warning("Missing model!", range_schema.type)
+                    continue
+                projection_data.append((range_schema, range_model, range_db_model))
+            if projection_data:
+                range_schemas_by_role[attrib_schema.name] = projection_data
+            else:
                 continue
-            schemas_by_role[attrib_schema.name] = range_schema
-            range_db_model = KNOWN_DB_MODELS.get(range_schema.type)
-            if not range_db_model:
-                log.warning("Missing model!", range_schema.type)
-                continue
-            db_model_by_role[attrib_schema.name] = range_db_model
             entity_id = await Topic.get_by_uri(session, value)
             if not entity_id:
                 log.warning("Missing topic:", value)
                 continue
-            topic_id_by_role[attrib_schema.name] = entity_id.id
+            topic_by_role[attrib_schema.name] = entity_id
         # TODO: Cache handlers, make the handlers per source
         r = await session.execute(select(EventHandler).filter_by(event_type_id=db_event.event_type_id).options(joinedload(EventHandler.target_range)))
         handlers: List[EventHandler] = r.scalars().all()
@@ -243,21 +250,32 @@ class ProjectionProcessor(PushProcessorQueue):
             db_object_by_role: Dict[str, Base] = {}
             projection_by_role: Dict[str, Json] = {}
             updated_projection_by_role: Dict[str, Json] = {}
+            used_projection_data_by_role: Dict[str, Tuple[ProjectionSchema, BaseModel, type[Base]]] = {}
             for attrib_schema in event_hk_schema.attributes:
-                if attrib_schema.name not in topic_id_by_role:
+                topic = topic_by_role.get(attrib_schema.name)
+                if not topic:
                     continue
                 # TODO: Check that range's id is in topic's as_projection
-                db_projection = await session.execute(select(range_db_model).filter_by(id=entity_id.id, source_id=source.id, obsolete=None))
-                if db_projection := db_projection.one_or_none():
-                    db_projection = db_projection[0]
-                else:
-                    log.warning("projection not found")
+                projection_data: List[Tuple[ProjectionSchema, BaseModel, type[Base]]] = range_schemas_by_role.get(attrib_schema.name)
+                if not projection_data:
                     continue
-                range_model = projection_model_by_role.get(attrib_schema.name)
-                range_schema = schemas_by_role.get(attrib_schema.name)
-                pd_projection = await db_to_projection(session, db_projection, range_model, range_schema)
-                db_object_by_role[attrib_schema.name] = db_projection
-                projection_by_role[attrib_schema.name] = pd_projection.model_dump(by_alias=True)
+                for range_schema, range_model, range_db_model in projection_data:
+                    # TODO: Use Topic.has_projections to avoid a few loops
+                    db_projection = await session.execute(select(range_db_model).filter_by(id=entity_id.id, source_id=source.id, obsolete=None))
+                    if db_projection := db_projection.one_or_none():
+                        # Note: Using first matching projection. What happens if there are many matches
+                        used_projection_data_by_role[attrib_schema.name] = (range_schema, range_model, range_db_model)
+                        db_projection = db_projection[0]
+                        pd_projection = await db_to_projection(session, db_projection, range_model, range_schema)
+                        db_object_by_role[attrib_schema.name] = db_projection
+                        projection_by_role[attrib_schema.name] = pd_projection.model_dump(by_alias=True)
+                        break
+                else:
+                    if attrib_schema.create:
+                        used_projection_data_by_role[attrib_schema.name] = projection_data[0]
+                    else:
+                        log.warn(f"Missing projections for {attrib_schema} in {db_event}")
+                        continue
             # apply the handlers
             for handler in handlers:
                 if handler.language != 'javascript':
@@ -276,15 +294,16 @@ class ProjectionProcessor(PushProcessorQueue):
                 if result["@type"] == event.data.type:
                     result["@type"] = hk_schema.context.shrink_iri(handler.target_range.uri)
                 # Use either create or update model according to whether it exists
-                new_projection = projection_model_by_role[handler.target_role].model_validate(result)
-                db_data = await projection_to_db(session, new_projection, schemas_by_role[handler.target_role])
+                range_schema, range_model, range_db_model = used_projection_data_by_role[handler.target_role]
+                new_projection = range_model.model_validate(result)
+                db_data = await projection_to_db(session, new_projection, range_schema)
                 if handler.target_role in db_object_by_role:
                     db_projection = db_object_by_role[handler.target_role]
                     for k, v in db_data.items():
                         setattr(db_projection, k, v)
                 else:
-                    db_projection = db_model_by_role[handler.target_role](
-                        id= topic_id_by_role[handler.target_role],source_id=source.id, event_time=db_event.created ,**db_data)
+                    db_projection = range_db_model(
+                        id= topic_by_role[handler.target_role].id,source_id=source.id, event_time=db_event.created ,**db_data)
                     session.add(db_projection)
                 # Should I update the current one? It introduces order-dependence, so no.
                 # THOUGH I could do it for missing values first?

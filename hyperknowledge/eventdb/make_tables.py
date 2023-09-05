@@ -12,7 +12,7 @@ from pydantic import json, BaseModel
 from rdflib.namespace import XSD, RDF, RDFS
 
 from .. import owner_scoped_session
-from . import dbTopicId, QName, PydanticURIRef
+from . import dbTopicId, QName, PydanticURIRef, as_list
 from .models import Base, ProjectionMixin, ProjectionTable, Struct, schema_defines_table, Term, Topic
 from .schemas import (
     HkSchema, ProjectionAttributeSchema, ProjectionSchema, models_from_schemas, LangStringModel,
@@ -60,6 +60,7 @@ def as_column(schema: ProjectionAttributeSchema) -> List[Column]:
         return [Column(schema.name, column_type, nullable=schema.optional),
                 Column(f"{schema.name}_lang", String, nullable=schema.optional)]
     else:
+        # Including union tuples
         return [Column(schema.name, column_type, nullable=schema.optional)]
 
 
@@ -166,9 +167,10 @@ async def process_schema(schema: HkSchema, schema_json: json, url: str, prefix: 
         for attrib_schema in subschema.attributes:
             if attrib_schema.range in scalar_field_types:
                 continue
-            range_prefix, range_term = schema.context.shrink_iri(attrib_schema.range).split(':')
-            range_vocab = schema.context.expand(f'{range_prefix}:')
-            resource_type = await Term.ensure(session, range_term, range_vocab, range_prefix)
+            for range in as_list(attrib_schema.range):
+                range_prefix, range_term = schema.context.shrink_iri(range).split(':')
+                range_vocab = schema.context.expand(f'{range_prefix}:')
+                resource_type = await Term.ensure(session, range_term, range_vocab, range_prefix)
     await create_tables(schema, db_schema.id, overwrite, session)
     make_projections(schema, True)
     ps = models_from_schemas([schema])
@@ -189,9 +191,12 @@ async def projection_to_db(session, projection: BaseModel, schema: ProjectionSch
             # Shouldn't I also ensure range here?
             topic = await Topic.ensure_url(session, value)
             if attribS.range in getProjectionSchemas():
+                # Implicitly: Not a tuple.
                 range_topic = await Topic.get_url(session, attribS.range)
-                topic.has_projections.append(range_topic.id)
-                flag_modified(topic, 'has_projections')
+                # Here we are inferring type. Not sure that's right?
+                if range_topic.id not in topic.has_projections:
+                    topic.has_projections.append(range_topic.id)
+                    flag_modified(topic, 'has_projections')
             result = topic.id
         db_attribs[attribS.name] = result
     return db_attribs
@@ -205,6 +210,7 @@ async def db_to_projection(session, db_object: Base, projectionModel: type[BaseM
         if value and attribS.range == RDF.langString:
             result = {"@value":value, "@lang": getattr(db_object, f'{attribS.name}_lang')}
         elif value and attribS.range not in scalar_field_types:
+            # Including union tuple
             topic = await session.get(Topic, result)
             result = topic.uri
         proj_attribs[attribS.name] = result

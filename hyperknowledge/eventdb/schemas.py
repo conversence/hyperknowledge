@@ -12,7 +12,7 @@ from uuid import UUID
 from rdflib import URIRef
 from rdflib.namespace import XSD, RDF, RDFS
 from sqlalchemy.orm.decl_api import DeclarativeBase
-from pydantic import BaseModel, Field, field_validator, create_model, ConfigDict, field_serializer
+from pydantic import BaseModel, Field, field_validator, create_model, ConfigDict, field_serializer, model_validator
 from pydantic.fields import FieldInfo
 
 from . import SchemaId, Name, SchemaName, PydanticURIRef, QName
@@ -95,14 +95,29 @@ class HkSchema(JsonLdModel):
 
 class EventAttributeSchema(BaseModel):
     name: Name
-    range: PydanticURIRef
+    range: Union[PydanticURIRef, Tuple[PydanticURIRef]]
     optional: Optional[bool] = True
     create: Optional[bool] = False
 
     @field_validator('range')
     @classmethod
     def validate_range(cls, v, info):
-        return URIRef(info.context['ctx'].expand(v))
+        if not isinstance(v, (list, tuple)):
+            return URIRef(info.context['ctx'].expand(v))
+        ranges = tuple(URIRef(info.context['ctx'].expand(u)) for u in v)
+        if len(ranges) == 1:
+            ranges = ranges[0]
+        else:
+            assert all(
+                x not in scalar_field_types for x in ranges
+            ), "No scalar types in range type union"
+        return ranges
+
+    @model_validator(mode='after')
+    def simple_range_if_creating(self) -> EventAttributeSchema:
+        if self.create and isinstance(self.range, tuple) and len(self.range) > 1:
+            raise ValueError('When creating a resource, range cannot be a union')
+        return self
 
 
 class ProjectionAttributeSchema(EventAttributeSchema):

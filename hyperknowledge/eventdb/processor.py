@@ -26,7 +26,7 @@ from py_mini_racer import MiniRacer
 from fastapi.websockets import WebSocket, WebSocketState
 from starlette.websockets import WebSocketDisconnect
 
-from .. import config, owner_scoped_session, db_config_get
+from .. import config, owner_scoped_session, db_config_get, production
 from . import dbTopicId, as_tuple
 from .models import (
     Base, EventProcessor, Event, Source, Term, Topic, EventHandler
@@ -172,8 +172,9 @@ class PushProcessorQueue(AbstractProcessorQueue):
                     await self.process_event(event, session)
                 except Exception as e:
                     log.exception(e)
-                    import pdb
-                    pdb.post_mortem()
+                    if not production:
+                        import pdb
+                        pdb.post_mortem()
                 if self.autoack:
                     await self.ack_event(event, session)
                     await session.commit()

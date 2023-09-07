@@ -355,7 +355,7 @@ EventT = TypeVar('EventT')
 
 
 class GenericEventModel(BaseModel, Generic[EventT]):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
 
     source: Optional[PydanticURIRef] = None
     creator: Optional[str] = None
@@ -388,7 +388,7 @@ EVENT_MODEL: type[GenericEventModel] = None
 
 
 class DynamicBaseSchema(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
 
 
 def model_from_schema(schema: EventSchema, prefix: str) -> BaseModel:
@@ -405,7 +405,6 @@ def model_from_schema(schema: EventSchema, prefix: str) -> BaseModel:
         classname,
         __base__=DynamicBaseSchema,  # Only for projections?
         __validators__=validators,
-        model_config = ConfigDict(extra='forbid'),
         **attributes)
     KNOWN_MODELS[schema_name] = (schema, model)
     EVENT_MODEL = None

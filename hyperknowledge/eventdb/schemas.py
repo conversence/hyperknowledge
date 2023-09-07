@@ -405,6 +405,7 @@ def model_from_schema(schema: EventSchema, prefix: str) -> BaseModel:
         classname,
         __base__=DynamicBaseSchema,  # Only for projections?
         __validators__=validators,
+        model_config = ConfigDict(extra='forbid'),
         **attributes)
     KNOWN_MODELS[schema_name] = (schema, model)
     EVENT_MODEL = None

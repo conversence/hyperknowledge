@@ -19,7 +19,12 @@ SchemaElement = QName
 UserId = Name
 dbTopicId = BIGINT
 
-def as_list(val):
+def as_tuple(val):
     if isinstance(val, (tuple, list)):
-        return val
-    return [val]
+        return tuple(val)
+    return (val,)
+
+def as_tuple_or_scalar(val):
+    if isinstance(val, (tuple, list)):
+        return tuple(val)
+    return val

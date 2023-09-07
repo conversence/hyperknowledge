@@ -27,7 +27,7 @@ from fastapi.websockets import WebSocket, WebSocketState
 from starlette.websockets import WebSocketDisconnect
 
 from .. import config, owner_scoped_session, db_config_get
-from . import dbTopicId, as_list
+from . import dbTopicId, as_tuple
 from .models import (
     Base, EventProcessor, Event, Source, Term, Topic, EventHandler
 )
@@ -222,7 +222,7 @@ class ProjectionProcessor(PushProcessorQueue):
             if not value:
                 continue
             projection_data: List[Tuple[ProjectionSchema, BaseModel, type[Base]]] = []
-            for range in as_list(attrib_schema.range):
+            for range in as_tuple(attrib_schema.range):
                 range_schema, range_model = projection_schemas.get(range, (None, None))
                 if not range_schema:
                     continue

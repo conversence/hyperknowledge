@@ -15,7 +15,7 @@ from sqlalchemy.orm.decl_api import DeclarativeBase
 from pydantic import BaseModel, Field, field_validator, create_model, ConfigDict, field_serializer, model_validator
 from pydantic.fields import FieldInfo
 
-from . import SchemaId, Name, SchemaName, PydanticURIRef, QName
+from . import SchemaId, Name, SchemaName, PydanticURIRef, QName, as_tuple_or_scalar
 from .context import Context
 # from rdflib.plugins.shared.jsonld.context import Context
 
@@ -95,16 +95,16 @@ class HkSchema(JsonLdModel):
 
 class EventAttributeSchema(BaseModel):
     name: Name
-    range: Union[PydanticURIRef, Tuple[PydanticURIRef]]
+    range: Union[PydanticURIRef, List[PydanticURIRef]]
     optional: Optional[bool] = True
     create: Optional[bool] = False
 
     @field_validator('range')
     @classmethod
     def validate_range(cls, v, info):
-        if not isinstance(v, (list, tuple)):
+        if not isinstance(v, list):
             return URIRef(info.context['ctx'].expand(v))
-        ranges = tuple(URIRef(info.context['ctx'].expand(u)) for u in v)
+        ranges = [URIRef(info.context['ctx'].expand(u)) for u in v]
         if len(ranges) == 1:
             ranges = ranges[0]
         else:
@@ -115,7 +115,7 @@ class EventAttributeSchema(BaseModel):
 
     @model_validator(mode='after')
     def simple_range_if_creating(self) -> EventAttributeSchema:
-        if self.create and isinstance(self.range, tuple) and len(self.range) > 1:
+        if self.create and isinstance(self.range, list) and len(self.range) > 1:
             raise ValueError('When creating a resource, range cannot be a union')
         return self
 
@@ -339,14 +339,14 @@ validators = {
 }
 
 def as_field(schema: EventAttributeSchema) -> Field:
-    ftype = scalar_field_types.get(schema.range, PydanticURIRef)
+    ftype = scalar_field_types.get(as_tuple_or_scalar(schema.range), PydanticURIRef)
     # TODO: defaults
     return (ftype, None)
 
 def validators_for_schema(schema: EventSchema):
     validators = {}
     for ev_schema in schema.attributes:
-        if validator := validators.get(ev_schema.range):
+        if validator := validators.get(as_tuple_or_scalar(ev_schema.range)):
             validators[f'validate_{ev_schema.name}'] = field_validator(ev_schema.name)(validator)
     return validators
 

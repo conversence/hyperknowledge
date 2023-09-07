@@ -12,7 +12,7 @@ from pydantic import json, BaseModel
 from rdflib.namespace import XSD, RDF, RDFS
 
 from .. import owner_scoped_session
-from . import dbTopicId, QName, PydanticURIRef, as_list
+from . import dbTopicId, QName, PydanticURIRef, as_tuple, as_tuple_or_scalar
 from .models import Base, ProjectionMixin, ProjectionTable, Struct, schema_defines_table, Term, Topic
 from .schemas import (
     HkSchema, ProjectionAttributeSchema, ProjectionSchema, models_from_schemas, LangStringModel,
@@ -51,7 +51,7 @@ column_types = {
 
 def as_column(schema: ProjectionAttributeSchema) -> List[Column]:
     # Non-scalars are dbTopicId
-    column_type = column_types.get(schema.range, dbTopicId)
+    column_type = column_types.get(as_tuple_or_scalar(schema.range), dbTopicId)
     if not schema.functional:
         column_type = ARRAY(column_type)
     # TODO: Foreign keys and other check constraints
@@ -165,9 +165,9 @@ async def process_schema(schema: HkSchema, schema_json: json, url: str, prefix: 
     # Ensure all the ranges
     for subschema in chain(schema.eventSchemas.values(), schema.projectionSchemas.values()):
         for attrib_schema in subschema.attributes:
-            if attrib_schema.range in scalar_field_types:
+            if as_tuple_or_scalar(attrib_schema.range) in scalar_field_types:
                 continue
-            for range in as_list(attrib_schema.range):
+            for range in as_tuple(attrib_schema.range):
                 range_prefix, range_term = schema.context.shrink_iri(range).split(':')
                 range_vocab = schema.context.expand(f'{range_prefix}:')
                 resource_type = await Term.ensure(session, range_term, range_vocab, range_prefix)
@@ -187,10 +187,10 @@ async def projection_to_db(session, projection: BaseModel, schema: ProjectionSch
         if attribS.range == RDF.langString:
             result = value.value if value else None
             db_attribs[f"{attribS.name}_lang"] = value.language if value else None
-        elif attribS.range not in scalar_field_types:
+        elif as_tuple_or_scalar(attribS.range) not in scalar_field_types:
             # Shouldn't I also ensure range here?
             topic = await Topic.ensure_url(session, value)
-            if attribS.range in getProjectionSchemas():
+            if as_tuple_or_scalar(attribS.range) in getProjectionSchemas():
                 # Implicitly: Not a tuple.
                 range_topic = await Topic.get_url(session, attribS.range)
                 # Here we are inferring type. Not sure that's right?
@@ -209,7 +209,7 @@ async def db_to_projection(session, db_object: Base, projectionModel: type[BaseM
         result = value
         if value and attribS.range == RDF.langString:
             result = {"@value":value, "@lang": getattr(db_object, f'{attribS.name}_lang')}
-        elif value and attribS.range not in scalar_field_types:
+        elif value and as_tuple_or_scalar(attribS.range) not in scalar_field_types:
             # Including union tuple
             topic = await session.get(Topic, result)
             result = topic.uri

@@ -105,9 +105,9 @@ async def get_current_active_agent(
     return current_agent
 
 
-async def get_token(username, password):
+async def get_token(username, password, expiration_minutes=30):
     async with client_scoped_session() as session:
-        token = await session.scalar(select(func.get_token(username, password)))
+        token = await session.scalar(select(func.get_token(username, password, expiration_minutes)))
         if token:
             await session.commit()   # Updating last_login
         return token

@@ -238,10 +238,10 @@ class ProjectionProcessor(PushProcessorQueue):
                 continue
             entity_id = await Topic.get_by_uri(session, value)
             if not entity_id:
-                log.warning("Missing topic: %s", value)
                 if attrib_schema.create and value.startswith('urn:uuid:'):
                     entity_id = await UUIDentifier.ensure_url(session, value)
                 else:
+                    log.warning("Missing topic: %s", value)
                     continue
             topic_by_role[attrib_schema.name] = entity_id
         # TODO: Cache handlers, make the handlers per source

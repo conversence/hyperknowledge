@@ -3,6 +3,7 @@ from typing import (
     Any,
 )
 from collections.abc import Callable
+from uuid import UUID
 
 from pydantic_core import core_schema
 from typing import Annotated
@@ -31,6 +32,9 @@ class _URIRefPydanticAnnotation:
         """
 
         def validate_from_str(value: str) -> URIRef:
+            if value.startswith('urn:uuid:'):
+                # Check validity
+                UUID(value[9:])
             return URIRef(value)
 
         from_str_schema = core_schema.chain_schema(

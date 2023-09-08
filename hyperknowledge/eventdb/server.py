@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.websockets import WebSocketDisconnect
 
 
-from .. import production, owner_scoped_session, client_scoped_session
+from .. import production, owner_scoped_session, db_config_get
 from . import PydanticURIRef
 from .context import Context
 from .auth import agent_session, get_current_agent
@@ -174,13 +174,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = db_config_get('token_minutes', 30)
 
 @app.post("/token", response_model=Token)
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
 ):
-    token = await get_token(form_data.username, form_data.password)
+    token = await get_token(form_data.username, form_data.password, ACCESS_TOKEN_EXPIRE_MINUTES * 60)
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

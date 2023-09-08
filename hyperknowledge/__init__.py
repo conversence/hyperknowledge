@@ -14,8 +14,11 @@ production = os.environ.get("PRODUCTION", False)
 target_db = os.environ.get("TARGET_DB", ("test" if "PYTEST_CURRENT_TEST" in os.environ else ("production" if production else "development")))
 
 
-def db_config_get(key: str):
-    return config.get(target_db, key)
+_db_config_get_nonce = object()
+def db_config_get(key: str, default=_db_config_get_nonce):
+    if default is _db_config_get_nonce or config.has_option(target_db, key):
+        return config.get(target_db, key)
+    return default
 
 
 db_name = db_config_get("database")

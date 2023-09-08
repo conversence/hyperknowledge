@@ -87,7 +87,7 @@ $$ LANGUAGE SQL STABLE;
 -- Name: get_token(character varying, character varying); Type: FUNCTION
 --
 
-CREATE OR REPLACE FUNCTION public.get_token(username_ character varying, pass character varying) RETURNS character varying
+CREATE OR REPLACE FUNCTION public.get_token(username_ character varying, pass character varying, duration integer=1000) RETURNS character varying
     LANGUAGE plpgsql
     AS $$
     DECLARE agent_id BIGINT;
@@ -103,7 +103,7 @@ CREATE OR REPLACE FUNCTION public.get_token(username_ character varying, pass ch
       END IF;
       IF passh = crypt(pass, passh) THEN
         SELECT sign(row_to_json(r), current_setting('app.jwt_secret')) INTO STRICT passh FROM (
-          SELECT CONCAT('agent:', agent_id::varchar) AS sub, extract(epoch from now())::integer + 1000 AS exp) r;
+          SELECT CONCAT('agent:', agent_id::varchar) AS sub, extract(epoch from now())::integer + duration AS exp) r;
         UPDATE agent SET last_login = (now() AT TIME ZONE 'UTC') WHERE username=username_;
         EXECUTE 'SET LOCAL ROLE ' || curuser;
         RETURN passh;
@@ -119,7 +119,7 @@ $$;
 -- Name: renew_token(character varying); Type: FUNCTION
 --
 
-CREATE OR REPLACE FUNCTION public.renew_token(token character varying) RETURNS character varying
+CREATE OR REPLACE FUNCTION public.renew_token(token character varying, duration integer=1000) RETURNS character varying
     LANGUAGE plpgsql
     AS $$
     DECLARE p json;
@@ -140,7 +140,7 @@ CREATE OR REPLACE FUNCTION public.renew_token(token character varying) RETURNS c
         RETURN NULL;
       END IF;
       SELECT sign(row_to_json(r), current_setting('app.jwt_secret')) INTO STRICT t FROM (
-        SELECT (p ->> 'sub') as sub, extract(epoch from now())::integer + 1000 AS exp) r;
+        SELECT (p ->> 'sub') as sub, extract(epoch from now())::integer + duration AS exp) r;
       curuser := current_user;
       EXECUTE 'SET LOCAL ROLE ' || current_database() || '__owner';
       UPDATE agent SET last_login = now() AT TIME ZONE 'UTC', confirmed = true WHERE id=agent_id;

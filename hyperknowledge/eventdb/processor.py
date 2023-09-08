@@ -13,7 +13,7 @@ from enum import Enum, IntEnum
 import logging
 from time import sleep
 import asyncio
-from json import JSONDecodeError
+from json import JSONDecodeError, dumps
 
 import anyio
 from anyio.from_thread import BlockingPortal
@@ -294,7 +294,7 @@ class ProjectionProcessor(PushProcessorQueue):
                 target_attrib_schema = attrib_schema_by_name[handler.target_role]
                 if handler.target_role not in projection_by_role and not target_attrib_schema.create:
                     continue
-                js = f"{handler_fname}({event.model_dump_json(by_alias=True, exclude_unset=True)}, {projection_by_role})"
+                js = f"{handler_fname}({event.model_dump_json(by_alias=True, exclude_unset=True)}, {dumps(projection_by_role)})"
                 result = self.js_ctx.execute(js)
                 # Convenience so the handler does not have to do it
                 if result["@type"] == event.data.type:

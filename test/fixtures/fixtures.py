@@ -1,5 +1,7 @@
 import os
 from typing import Dict, Iterator
+import logging
+
 from httpx import AsyncClient
 from httpx_ws.transport import ASGIWebSocketTransport
 from asgi_lifespan import LifespanManager
@@ -10,6 +12,12 @@ from fastapi.security import OAuth2PasswordRequestForm
 # We do not want to load hk here, because that would load the session.
 
 import pytest
+
+
+@pytest.fixture(scope="session")
+def logger():
+    return logging.getLogger("tests")
+
 
 @pytest.fixture(scope="session")
 async def sqla_engine(ini_file):

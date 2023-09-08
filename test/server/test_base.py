@@ -1,4 +1,5 @@
 from asyncio import sleep
+from datetime import datetime
 
 import pytest
 from httpx import AsyncClient
@@ -92,7 +93,7 @@ async def test_dependent_source(client, loaded_handlers, quidam_token, quidam_te
     result = response.json()
     assert result["@id"] == doc_id
 
-async def test_subscriptions(client: AsyncClient, loaded_handlers, quidam_token, quidam_test_source):
+async def test_subscriptions(client: AsyncClient, loaded_handlers, quidam_token, quidam_test_source, logger):
     from hyperknowledge.eventdb.schemas import GenericEventModel
     headers = dict(Authorization=f"Bearer {quidam_token}")
     async with aconnect_ws("http://test/ws", client) as ws:
@@ -102,7 +103,7 @@ async def test_subscriptions(client: AsyncClient, loaded_handlers, quidam_token,
         await ws.send_json(dict(cmd='listen', source='test'))
         data = await ws.receive_json()
         assert data['listen'] == 'test'
-
+        t1 = datetime.now()
         # Post the event
         event = GenericEventModel(data={
             "@type": "ex:create_document",
@@ -110,6 +111,10 @@ async def test_subscriptions(client: AsyncClient, loaded_handlers, quidam_token,
             "url": "http://example.com/doc0"})
         response = await client.post(f"/source/{quidam_test_source.local_name}/events", json=event.model_dump(), headers=headers)
         assert response.status_code == 201, response.json()
+        t2 = datetime.now()
+        logger.debug(f"posting the event took {t2-t1}")
 
         data = await ws.receive_json()
         assert data['data']['@type'] == 'ex:create_document'
+        t3 = datetime.now()
+        logger.debug(f"receiving the event took {t3-t2}")

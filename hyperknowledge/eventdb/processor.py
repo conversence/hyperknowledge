@@ -532,6 +532,7 @@ class WebSocketHandler():
             r = await session.execute(q)
             if r := r.first():
                 (processor,) = r
+                source = processor.source
             elif source_name:
                 source = await session.execute(select(Source).filter_by(local_name=source_name))
                 source = source.first()

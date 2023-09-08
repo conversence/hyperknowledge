@@ -216,7 +216,11 @@ class UUIDentifier(Topic):
         return PydanticURIRef(f'urn:uuid:{self.value}')
 
     @classmethod
-    async def ensure(cls, session, uuid=None) -> UUIDentifier:
+    async def ensure(cls, session, uuid:Union[str, UUIDv]=None) -> UUIDentifier:
+        if isinstance(uuid, str):
+            if uuid.startswith('urn:uuid:'):
+                uuid = uuid[:9]
+            uuid=UUIDv(uuid)
         id_ = await session.scalar(ensure_uuid(uuid))
         await session.flush()
         return  await session.get(cls, id_)

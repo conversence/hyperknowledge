@@ -29,7 +29,7 @@ from starlette.websockets import WebSocketDisconnect
 from .. import config, owner_scoped_session, db_config_get, production
 from . import dbTopicId, as_tuple
 from .models import (
-    Base, EventProcessor, Event, Source, Term, Topic, EventHandler
+    Base, EventProcessor, Event, Source, Term, Topic, EventHandler, UUIDentifier
 )
 from .schemas import getEventModel, HkSchema, getProjectionSchemas, ProjectionSchema, GenericEventModel, AgentModel, EventAttributeSchema
 from .make_tables import KNOWN_DB_MODELS, db_to_projection, projection_to_db
@@ -229,7 +229,7 @@ class ProjectionProcessor(PushProcessorQueue):
                     continue
                 range_db_model = KNOWN_DB_MODELS.get(range_schema.type)
                 if not range_db_model:
-                    log.warning("Missing model!", range_schema.type)
+                    log.warning("Missing model! %s", range_schema.type)
                     continue
                 projection_data.append((range_schema, range_model, range_db_model))
             if projection_data:
@@ -238,8 +238,11 @@ class ProjectionProcessor(PushProcessorQueue):
                 continue
             entity_id = await Topic.get_by_uri(session, value)
             if not entity_id:
-                log.warning("Missing topic:", value)
-                continue
+                log.warning("Missing topic: %s", value)
+                if attrib_schema.create and value.startswith('urn:uuid:'):
+                    entity_id = await UUIDentifier.ensure_url(session, value)
+                else:
+                    continue
             topic_by_role[attrib_schema.name] = entity_id
         # TODO: Cache handlers, make the handlers per source
         r = await session.execute(select(EventHandler).filter_by(event_type_id=db_event.event_type_id).options(joinedload(EventHandler.target_range)))
@@ -253,13 +256,15 @@ class ProjectionProcessor(PushProcessorQueue):
             updated_projection_by_role: Dict[str, Json] = {}
             used_projection_data_by_role: Dict[str, Tuple[ProjectionSchema, BaseModel, type[Base]]] = {}
             for attrib_schema in event_hk_schema.attributes:
-                topic = topic_by_role.get(attrib_schema.name)
-                if not topic:
-                    continue
-                # TODO: Check that range's id is in topic's as_projection
                 projection_data: List[Tuple[ProjectionSchema, BaseModel, type[Base]]] = range_schemas_by_role.get(attrib_schema.name)
                 if not projection_data:
                     continue
+                topic = topic_by_role.get(attrib_schema.name)
+                if not topic:
+                    if attrib_schema.create:
+                        used_projection_data_by_role[attrib_schema.name] = projection_data[0]
+                    continue
+                # TODO: Check that range's id is in topic's as_projection
                 for range_schema, range_model, range_db_model in projection_data:
                     # TODO: Use Topic.has_projections to avoid a few loops
                     db_projection = await session.execute(select(range_db_model).filter_by(id=entity_id.id, source_id=source.id, obsolete=None))
@@ -328,7 +333,7 @@ class Dispatcher(AbstractProcessorQueue, Thread):
         self.websocket_processor: PushProcessorQueue = None
 
     def set_status(self, status: lifecycle):
-        log.debug("Dispatcher status:", status)
+        log.debug("Dispatcher status: %s", status)
         assert status >= self.status or (self.status == lifecycle.active and status == lifecycle.started)
         self.status = status
 

@@ -8,10 +8,8 @@ RUN apt-get update && apt-get install -y \
             apt-utils \
             apt-transport-https \
             ca-certificates \
-            python3 \
-            python3-pip \
-            python3-virtualenv \
-            python3-setuptools \
+            python3.11 \
+            python3.11-venv \
             postgresql-client && \
             apt-get upgrade
 WORKDIR /opt
@@ -24,7 +22,7 @@ WORKDIR /opt/hyperknowledge
 ENV LC_ALL="C.UTF-8"
 ENV LC_CTYPE="C.UTF-8"
 ENV PRODUCTION=1
-RUN python3 -mvirtualenv venv && \
+RUN python3.11 -mvenv venv && \
     . venv/bin/activate && \
     pip install --upgrade pip && \
     pip install -e .

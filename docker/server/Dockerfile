@@ -43,4 +43,4 @@ CMD . venv/bin/activate && \
     python scripts/initial_setup.py --app_name HyperKnowledge --host ${postgres_host_env} -p postgres --no-create-development --no-create-test --store-password && \
     python scripts/db_updater.py -d production init && \
     python scripts/db_updater.py -d production deploy && \
-    uvicorn --host 0.0.0.0 hyperknowledge.eventdb.server:app
+    gunicorn -b 0.0.0.0:8000 -k uvicorn.workers.UvicornWorker hyperknowledge.eventdb.server:app

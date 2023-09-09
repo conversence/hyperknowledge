@@ -35,17 +35,20 @@ def as_tuple_or_scalar(val):
         return tuple(val)
     return val
 
-def make_engine(db=target_db, owner=True):
-    # cf https://github.com/MagicStack/asyncpg/issues/530
-    engine = create_async_engine(engine_url(db, owner), connect_args={'server_settings': {'jit': 'off'}})
-    # The following should make the jit setting unnecessary but does not.
-    # Still does not hurt, and keeping for reference
+async def setup_connection_enums(conn):
     from .models import all_enums
+
+    for e in all_enums:
+        await conn.set_builtin_type_codec(str(e.name), schema='public', codec_name="text")
+
+
+def make_engine(db=target_db, owner=True):
+    engine = create_async_engine(engine_url(db, owner))
+    # cf https://github.com/MagicStack/asyncpg/issues/530
 
     @event.listens_for(engine.sync_engine, "connect")
     def connect(conn, connection_record):
-        for enum_name in [e.name for e in all_enums]:
-            conn.driver_connection.set_builtin_type_codec(enum_name, schema='public', codec_name="text")
+        conn.await_(setup_connection_enums(conn.driver_connection))
     return engine
 
 def make_session_factory(owner=True):

@@ -5,12 +5,13 @@ from datetime import timedelta, datetime
 from json import JSONDecodeError
 from itertools import chain
 import logging
+from uuid import UUID
 
 from typing_extensions import TypedDict
 from pydantic import ConfigDict, BaseModel
 from sqlalchemy import select, text, delete
 from sqlalchemy.sql.functions import func
-from sqlalchemy.sql.expression import and_
+from sqlalchemy.sql.expression import and_, literal_column
 from sqlalchemy.orm import joinedload, aliased
 from fastapi import FastAPI, HTTPException, Request, Depends, status, Response, Query
 from fastapi.security import OAuth2PasswordRequestForm
@@ -26,7 +27,7 @@ from .context import Context
 from .auth import agent_session, get_current_agent
 from .schemas import (
     LocalSourceModel, RemoteSourceModel, GenericEventModel, getEventModel, AgentModel, AgentModelWithPw, EventSchema, EventHandlerSchema, EventHandlerSchemas,
-    models_from_schemas, HkSchema, getProjectionSchemas, EntityTopicSchema, AgentModelOptional,
+    models_from_schemas, HkSchema, getProjectionSchemas, EntityTopicSchema, AgentModelOptional, KNOWN_MODELS,
     AgentSourceSelectivePermissionModel, AgentSourcePermissionModel, AgentSourceSelectivePermissionModelOptional, AgentSourcePermissionModelOptional)
 from .models import (Source, Event, Struct, UUIDentifier, Term, Vocabulary, Topic, EventHandler, Agent, AgentSourceSelectivePermission, AgentSourcePermission, schema_defines_table)
 from .make_tables import read_existing_projections, KNOWN_DB_MODELS, process_schema, db_to_projection
@@ -573,13 +574,48 @@ async def get_schema_context(prefix: str, component:str, current_agent: CurrentA
 
 
 @app.get("/source/{source_name}/topic/{entity_id}")
-async def get_entity(source_name: str, entity_id: str, current_agent: CurrentAgentType) -> EntityTopicSchema:
+async def get_entity(source_name: str, entity_id: UUID, current_agent: CurrentAgentType) -> EntityTopicSchema:
     async with agent_session(current_agent) as session:
-        # WTF?
-        projection = await session.execute(select(UUIDentifier).filter_by(source_id=source_id, obsolete=None).join(UUIDentifier).filter_by(value=entity_id))
-        if projection := projection.first():
-            return EntityTopicSchema.model_validate(projection[0])
-        raise HTTPException(404, "Entity does not exist")
+        base_topic: UUIDentifier = await session.scalar(select(UUIDentifier).filter_by(value=entity_id))
+        if not base_topic:
+            raise HTTPException(404, "No such topic")
+        terms = await session.execute(select(Term).filter(Term.id.in_(base_topic.has_projections)))
+        terms = {t.uri: t for (t,) in terms}
+        db_model_by_term = {tid: KNOWN_DB_MODELS.get(tid) for tid in terms}
+        db_models = [m for m in db_model_by_term.values() if m]
+        if not db_models:
+            raise HTTPException(404, "Entity has no projections")
+        source = await session.scalar(select(Source).filter_by(local_name=source_name))
+        qs = [select(literal_column(f"'{terms[tid].qname}'")).select_from(m).filter_by(id=base_topic.id, source_id=source.id) for (tid, m) in db_model_by_term.items()]
+        print([str(q) for q in qs])
+        q = qs.pop()
+        if qs:
+            q = q.union_all(qs)
+        print(q)
+        defined_term_names = await session.execute(q)
+        defined_term_names = [n for (n,) in defined_term_names]
+        if not defined_term_names:
+            raise HTTPException(404, "Entity has no projections")
+        # If we wanted to return all projections:
+        if False:
+            projections: List[BaseModel] = []
+            for projection_schema_term_uri in terms:
+                projection_cls = db_model_by_term[projection_schema_term_uri]
+                if not projection_cls:
+                    continue
+                (schema_def, schema_model) = KNOWN_MODELS.get(projection_schema_term_uri, (None, None))
+                if not schema_model:
+                    continue
+                projection = await session.scalar(select(projection_cls).filter_by(obsolete=None, id=base_topic.pid, source_id=source.id))
+                if projection:
+                    model = schema_model.model_validate(projection)
+                    projections.append(model)
+            if not projections:
+                raise HTTPException(404, "Entity has no projections")
+            return projections
+
+        # This is an approximation, as only some of those will be defined in the
+        return EntityTopicSchema(id=base_topic.value, projections=defined_term_names)
 
 @app.get("/context")
 async def get_contexts(current_agent: CurrentAgentType) -> Dict[int, PydanticURIRef]:

@@ -189,6 +189,12 @@ class Term(Topic):
     def uri(self) -> PydanticURIRef:
         return PydanticURIRef(self.vocabulary.uri+self.term)
 
+    @property
+    def qname(self) -> PydanticURIRef:
+        if self.vocabulary.prefix:
+            return PydanticURIRef(f"{self.vocabulary.prefix}:{self.term}")
+        return self.uri
+
     @classmethod
     async def ensure(cls, session, term: str, vocabulary: Union[None, str, int]=None, prefix: str=None) -> Term:
         if prefix or isinstance(vocabulary, str):

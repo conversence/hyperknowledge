@@ -8,6 +8,7 @@ from datetime import datetime, date, timedelta, time
 from base64 import urlsafe_b64decode
 from functools import reduce
 from uuid import UUID
+from enum import Enum
 
 from rdflib import URIRef
 from rdflib.namespace import XSD, RDF, RDFS
@@ -143,9 +144,16 @@ class EventSchema(BaseModel):
     def validate_type(cls, v, info):
         return URIRef(info.context['ctx'].expand(v))
 
+class HistoryStorageDirective(Enum):
+    no_history = 'no_history'
+    separate_history = 'separate_history'
+    full_history = 'full_history'
+    integrated_history = 'integrated_history'
+
 
 class ProjectionSchema(EventSchema):
     attributes: List[ProjectionAttributeSchema]
+    history_storage: HistoryStorageDirective = HistoryStorageDirective.full_history
     # TODO: snapshot retention policy
 
 
@@ -397,6 +405,7 @@ def model_from_schema(schema: EventSchema, prefix: str) -> BaseModel:
     attributes['type'] = (Literal[f'{prefix}:{schema.name}'], Field(alias='@type'))
     if isinstance(schema, ProjectionSchema):
         attributes['id'] = (PydanticURIRef, Field(alias='@id'))
+        attributes['when'] = (Optional[datetime], Field(None, alias='@when'))
     assert all(list(attributes.values()))
     classname = f'{prefix.title()}{schema.name.title()}'
     validators = validators_for_schema(schema)

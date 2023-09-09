@@ -136,9 +136,9 @@ async def populate_app(app: FastAPI, initial=False):
 
     def define_projection_getter(topic, schema, db_model, pyd_model):
         @app.get("/source/{source_name}/topic/{entity_id}/"+f"{topic.vocabulary.prefix}:{schema.name}")
-        async def get_projection(source_name: str, entity_id: str, request: Request, response: Response, current_agent: CurrentAgentType) -> pyd_model:
+        async def get_projection(source_name: str, entity_id: UUID, request: Request, response: Response, current_agent: CurrentAgentType) -> pyd_model:
             async with agent_session(current_agent) as session:
-                q = select(db_model).filter_by(obsolete=None).join(UUIDentifier).filter_by(value=entity_id).join(Source, db_model.source_id==Source.id).filter_by(local_name=source_name)
+                q = db_model.current_query().join(UUIDentifier).filter_by(value=entity_id).join(Source, db_model.source_id==Source.id).filter_by(local_name=source_name)
                 projection = await session.execute(q)
                 if projection := projection.first():
                     model = await db_to_projection(session, projection[0], pyd_model, schema)
@@ -612,7 +612,7 @@ async def get_entity(source_name: str, entity_id: UUID, current_agent: CurrentAg
                 (schema_def, schema_model) = KNOWN_MODELS.get(projection_schema_term_uri, (None, None))
                 if not schema_model:
                     continue
-                projection = await session.scalar(select(projection_cls).filter_by(obsolete=None, id=base_topic.pid, source_id=source.id))
+                projection = await session.scalar(projection_cls.current_query().filter_by(id=base_topic.pid, source_id=source.id))
                 if projection:
                     model = schema_model.model_validate(projection)
                     projections.append(model)

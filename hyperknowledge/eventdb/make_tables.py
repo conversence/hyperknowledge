@@ -12,9 +12,9 @@ from pydantic import json, BaseModel
 from rdflib.namespace import XSD, RDF, RDFS
 
 from . import dbTopicId, QName, PydanticURIRef, as_tuple, as_tuple_or_scalar, owner_scoped_session
-from .models import Base, ProjectionMixin, ProjectionTable, Struct, schema_defines_table, Term, Topic
+from .models import Base, ProjectionMixin, ProjectionSnapshotMixin, ProjectionMixedHistoryMixin, ProjectionTable, Struct, schema_defines_table, Term, Topic
 from .schemas import (
-    HkSchema, ProjectionAttributeSchema, ProjectionSchema, models_from_schemas, LangStringModel,
+    HkSchema, ProjectionAttributeSchema, ProjectionSchema, models_from_schemas, LangStringModel, HistoryStorageDirective,
     getProjectionSchemas, scalar_field_types)
 from .auth import escalated_session
 
@@ -63,21 +63,34 @@ def as_column(schema: ProjectionAttributeSchema) -> List[Column]:
         return [Column(schema.name, column_type, nullable=schema.optional)]
 
 
-def make_table(schema: ProjectionSchema, prefix: str, reloading=False) -> Base:
-    classname = f'{prefix.title()}{schema.name.title()}'
+def make_table(schema: ProjectionSchema, prefix: str, snapshot=False, reloading=False) -> Base:
     columns = list(chain(*[as_column(s) for s in schema.attributes]))
     attributes = {c.name: c for c in columns}
-    attributes['__tablename__'] = f'{prefix}__{schema.name}'
+    if snapshot:
+        classname = f'{prefix.title()}{schema.name.title()}Snapshot'
+        attributes['__tablename__'] = f'{prefix}__{schema.name}__s'
+        assert schema.history_storage == HistoryStorageDirective.separate_history
+        mixin = ProjectionSnapshotMixin
+    else:
+        classname = f'{prefix.title()}{schema.name.title()}'
+        attributes['__tablename__'] = f'{prefix}__{schema.name}'
+        if schema.history_storage in (HistoryStorageDirective.full_history, HistoryStorageDirective.integrated_history):
+            mixin = ProjectionMixedHistoryMixin
+        elif schema.history_storage == HistoryStorageDirective.no_history:
+            mixin = ProjectionMixin
+        elif schema.history_storage == HistoryStorageDirective.separate_history:
+            mixin = ProjectionMixin
     if reloading:
         attributes['__table_args__'] = dict(extend_existing=True)
-    return type(classname, (Base, ProjectionMixin), attributes)
+    attributes['schema_type'] = schema.type
+    return type(classname, (Base, mixin), attributes)
 
 
 KNOWN_DB_MODELS: Dict[PydanticURIRef, Base] = {}
-
+KNOWN_SNAPSHOT_MODELS: Dict[PydanticURIRef, Base] = {}
 
 def make_projections(schema: HkSchema, reload=False) -> List[Base]:
-    global KNOWN_DB_MODELS
+    global KNOWN_DB_MODELS, KNOWN_SNAPSHOT_MODELS
     ctx = schema.context
     base = getattr(ctx, 'vocab', None) or getattr(ctx, '_base', None)
     assert base, "The schema needs to have a _base or vocab"
@@ -91,9 +104,17 @@ def make_projections(schema: HkSchema, reload=False) -> List[Base]:
         cls_name = f'{prefix.title()}{s.name.title()}'
         cls = mapped_classes.get(cls_name)
         if reload or not cls:
-            cls = make_table(s, prefix, cls and reload)
+            cls = make_table(s, prefix, reloading=cls and reload)
         classes.append(cls)
         KNOWN_DB_MODELS[s.type] = cls
+        if s.history_storage == HistoryStorageDirective.separate_history:
+            cls_name = cls_name + "Snapshot"
+            cls = mapped_classes.get(cls_name)
+            if reload or not cls:
+                cls = make_table(s, prefix, True, cls and reload)
+            classes.append(cls)
+            KNOWN_SNAPSHOT_MODELS[s.type] = cls
+
     return classes
 
 

@@ -4,13 +4,14 @@ from __future__ import annotations
 from typing import List, Union, Optional
 import re
 from uuid import UUID as UUIDv
+from datetime import datetime
 
 from rdflib import URIRef
-from sqlalchemy import ForeignKey, String, Text, Boolean, Integer, Table, Column, select, delete, update
+from sqlalchemy import ForeignKey, String, Text, Boolean, Integer, Table, Column, select, delete, update, PrimaryKeyConstraint
 from sqlalchemy.sql.functions import func, GenericFunction
 from sqlalchemy.sql.expression import join, column
 from sqlalchemy.ext.hybrid import hybrid_property, hybrid_method
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, declared_attr, foreign, remote, joinedload, aliased, column_property
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, declared_attr, foreign, remote, joinedload, aliased, column_property, Query
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, ENUM, UUID, TIMESTAMP, BYTEA
 from sqlalchemy_utils import LtreeType
 
@@ -468,11 +469,9 @@ class AgentSourceSelectivePermission(Base):
     event_type: Mapped[Term] = relationship(Term)
 
 
-class ProjectionMixin:
-    id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Topic.id), primary_key=True)
+class BaseProjectionMixin:
     source_id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Source.id), primary_key=True)
-    event_time: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP, primary_key=True)
-    obsolete: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP, nullable=True)
+    id: Mapped[dbTopicId] = mapped_column(dbTopicId, ForeignKey(Topic.id), primary_key=True)
 
     @declared_attr
     def source(cls) -> Mapped[Source]:
@@ -482,11 +481,79 @@ class ProjectionMixin:
     def last_event(cls) -> Mapped[Event]:
         return relationship(Event, primaryjoin=(
             remote(Event.source_id)==foreign(cls.source_id))
-         & (remote(Event.created)==foreign(cls.event_time)))
+         & (remote(Event.created)==foreign(cls.when)))
 
     @declared_attr
     def identifier(cls) -> Mapped[Topic]:
         return relationship(Topic, primaryjoin=Topic.id==cls.id)
+
+
+class ProjectionMixin(BaseProjectionMixin):
+    when: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP, nullable=False)
+
+    @classmethod
+    def current_query(cls) -> Query:
+        return select(cls)
+
+    @classmethod
+    def query_at_time(cls, at_time: datetime, inclusive=True) -> Query:
+        from .make_tables import KNOWN_SNAPSHOT_MODELS
+        cls2 = KNOWN_SNAPSHOT_MODELS.get(cls.schema_type)
+        assert cls2
+        return cls2.at_time(at_time, inclusive)
+
+
+class ProjectionNoHistoryMixin(ProjectionMixin):
+    @classmethod
+    def query_at_time(cls, at_time: datetime, inclusive=True) -> Query:
+        return select(cls).filter(False)
+
+
+class ProjectionSnapshotMixin(BaseProjectionMixin):
+    when: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP, nullable=False, primary_key=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("source_id", "id", "when"),
+    )
+
+    @classmethod
+    def current_query(cls) -> Query:
+        raise NotImplementedError()
+
+    @classmethod
+    def query_at_time(cls, at_time: datetime, inclusive=True) -> Query:
+        q = select(cls)
+        if inclusive:
+            q = q.filter(cls.when <= at_time)
+        else:
+            q = q.filter(cls.when < at_time)
+        return q.order_by(cls.when.desc()).limit(1)
+
+
+class ProjectionMixedHistoryMixin(BaseProjectionMixin):
+    when: Mapped[TIMESTAMP] = mapped_column(TIMESTAMP, nullable=False, primary_key=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("source_id", "id", "when"),
+    )
+
+    @classmethod
+    def current_query(cls) -> Query:
+        return select(cls).order_by(cls.when.desc()).limit(1)
+
+    def query_at_time(cls, at_time: datetime, inclusive=True) -> Query:
+        q = select(cls)
+        if inclusive:
+            q = q.filter(cls.when <= at_time)
+        else:
+            q = q.filter(cls.when < at_time)
+        return q.order_by(cls.when.desc()).limit(1)
+
+    @declared_attr
+    def last_event(cls) -> Mapped[Event]:
+        return relationship(Event, primaryjoin=(
+            remote(Event.source_id)==foreign(cls.source_id))
+         & (remote(Event.created)==foreign(cls.when)))
 
 
 async def delete_data(session):

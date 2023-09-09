@@ -5,8 +5,9 @@ This happens on a thread, with attendant machinery.
 from __future__ import annotations
 
 from threading import Thread
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple, List
+from itertools import chain
 from enum import Enum, IntEnum
 import logging
 from time import sleep
@@ -19,6 +20,7 @@ import asyncpg_listen
 from pydantic import Json, BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.orm import joinedload
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.sql.functions import func
 from py_mini_racer import MiniRacer
 
@@ -27,10 +29,14 @@ from . import dbTopicId, as_tuple, owner_scoped_session
 from .models import (
     Base, EventProcessor, Event, Term, Topic, EventHandler, UUIDentifier
 )
-from .schemas import getEventModel, HkSchema, getProjectionSchemas, ProjectionSchema, EventAttributeSchema
-from .make_tables import KNOWN_DB_MODELS, db_to_projection, projection_to_db
+from .schemas import (
+  getEventModel, HkSchema, getProjectionSchemas, ProjectionSchema, EventAttributeSchema, HistoryStorageDirective)
+from .make_tables import KNOWN_DB_MODELS, db_to_projection, projection_to_db, KNOWN_SNAPSHOT_MODELS
 
 log = logging.getLogger("hyperknowledge.eventdb.processor")
+
+# TODO: Parametrize
+snapshot_interval = timedelta(minutes=1)
 
 class QueuePosition(Enum):
     start = 'start'
@@ -210,7 +216,7 @@ class ProjectionProcessor(PushProcessorQueue):
         event_hk_schema = hk_schema.eventSchemas[event.data.type.split(':')[1]]
         projection_schemas = getProjectionSchemas()
         range_schemas_by_role: Dict[str, List[Tuple[ProjectionSchema, BaseModel, type[Base]]]] = {}
-        topic_by_role: Dict[str, dbTopicId] = {}
+        topic_by_role: Dict[str, Topic] = {}
         attrib_schema_by_name: Dict[str, EventAttributeSchema] = {}
         for attrib_schema in event_hk_schema.attributes:
             attrib_schema_by_name[attrib_schema.name] = attrib_schema
@@ -239,7 +245,12 @@ class ProjectionProcessor(PushProcessorQueue):
                     log.warning("Missing topic: %s", value)
                     continue
             topic_by_role[attrib_schema.name] = entity_id
+        range_urls = set(chain(*[[r[0].type for r in v] for v in  range_schemas_by_role.values()]))
+        ranges: Dict[str, Term] = {}
+        for url in range_urls:
+            ranges[url] = await Term.get_by_uri(session, url)
         # TODO: Cache handlers, make the handlers per source
+        # TODO: Maybe only those handlers with a target in the known terms?
         r = await session.execute(select(EventHandler).filter_by(event_type_id=db_event.event_type_id).options(joinedload(EventHandler.target_range)))
         handlers: List[EventHandler] = r.scalars().all()
         # Note the event may come from another session
@@ -262,7 +273,7 @@ class ProjectionProcessor(PushProcessorQueue):
                 # TODO: Check that range's id is in topic's as_projection
                 for range_schema, range_model, range_db_model in projection_data:
                     # TODO: Use Topic.has_projections to avoid a few loops
-                    db_projection = await session.execute(select(range_db_model).filter_by(id=entity_id.id, source_id=source.id, obsolete=None))
+                    db_projection = await session.execute(range_db_model.current_query().filter_by(id=entity_id.id, source_id=source.id))
                     if db_projection := db_projection.one_or_none():
                         # Note: Using first matching projection. What happens if there are many matches
                         used_projection_data_by_role[attrib_schema.name] = (range_schema, range_model, range_db_model)
@@ -278,6 +289,7 @@ class ProjectionProcessor(PushProcessorQueue):
                         log.warn(f"Missing projections for {attrib_schema} in {db_event}")
                         continue
             # apply the handlers
+            # TODO: Maybe start with handlers that will create objects?
             for handler in handlers:
                 if handler.language != 'javascript':
                     raise NotImplementedError()
@@ -287,6 +299,7 @@ class ProjectionProcessor(PushProcessorQueue):
                     self.js_ctx.eval(handler_txt)
                     self.loaded_handlers.add(handler.id)
                 target_attrib_schema = attrib_schema_by_name[handler.target_role]
+                topic = topic_by_role[handler.target_role]
                 if handler.target_role not in projection_by_role and not target_attrib_schema.create:
                     continue
                 js = f"{handler_fname}({event.model_dump_json(by_alias=True, exclude_unset=True)}, {dumps(projection_by_role)})"
@@ -294,22 +307,64 @@ class ProjectionProcessor(PushProcessorQueue):
                 # Convenience so the handler does not have to do it
                 if result["@type"] == event.data.type:
                     result["@type"] = hk_schema.context.shrink_iri(handler.target_range.uri)
-                # Use either create or update model according to whether it exists
                 range_schema, range_model, range_db_model = used_projection_data_by_role[handler.target_role]
                 new_projection = range_model.model_validate(result)
                 db_data = await projection_to_db(session, new_projection, range_schema)
-                if handler.target_role in db_object_by_role:
+                do_create = False
+                do_update = False
+                do_transfer = False
+                prev_state = db_object_by_role.get(handler.target_role)
+                if prev_state is None:
+                    # if no past state, just create
+                    do_create = True
+                elif range_schema.history_storage == HistoryStorageDirective.no_history:
+                    # No history: always update
+                    do_update = True
+                elif range_schema.history_storage == HistoryStorageDirective.full_history:
+                    # Full history: Always add a new state
+                    do_create = True
+                elif range_schema.history_storage == HistoryStorageDirective.separate_history:
+                    # Separate history: Check how long since latest snapshot
+                    snapshot_cls = KNOWN_SNAPSHOT_MODELS[range_schema.type]
+                    previous_snapshot_time = await session.scalar(
+                        select(snapshot_cls.when).filter_by(source_id=source.id, id=prev_state.id).order_by(snapshot_cls.when.desc()).limit(1)
+                    )
+                    if previous_snapshot_time is None or prev_state.when - previous_snapshot_time > snapshot_interval:
+                        # If long enough, transfer old data to new.
+                        do_transfer = True
+                    do_update = True
+                elif range_schema.history_storage == HistoryStorageDirective.mixed_history:
+                    # Mixed history: Check how long since latest snapshot
+                    previous_snapshot_time = await session.scalar(
+                        select(range_db_model.when).filter_by(source_id=source.id, id=prev_state.id).filter(range_db_model.when < prev_state.when).order_by(snapshot_cls.when.desc()).limit(1)
+                    )
+                    if previous_snapshot_time is None or prev_state.when - previous_snapshot_time > snapshot_interval:
+                        do_create = True
+                    else:
+                        do_update = True
+                else:
+                    raise RuntimeError("Unknown history_storage value")
+                if do_transfer:
+                    session.add(snapshot_cls(**{
+                        c.name: getattr(prev_state, c.name)
+                        for c in prev_state.__class__.__mapper__.columns
+                    }))
+                if do_update:
                     db_projection = db_object_by_role[handler.target_role]
                     for k, v in db_data.items():
                         setattr(db_projection, k, v)
-                else:
+                    db_projection.when = event.created
+                if do_create:
                     db_projection = range_db_model(
-                        id= topic_by_role[handler.target_role].id,source_id=source.id, event_time=db_event.created ,**db_data)
+                        id= topic_by_role[handler.target_role].id,source_id=source.id, when=db_event.created ,**db_data)
                     session.add(db_projection)
-                # Should I update the current one? It introduces order-dependence, so no.
-                # THOUGH I could do it for missing values first?
+                # Not sure that this is useful. Certainly do not update current projections.
                 updated_projection_by_role[handler.target_role] = new_projection.model_dump()
                 # TODO: Make sure the projection type is in the topic
+                range_term = ranges[range_schema.type]
+                if range_term.id not in topic.has_projections:
+                    topic.has_projections.append(range_term.id)
+                    flag_modified(topic, 'has_projections')
 
     def after_event(self, db_event: Event):
         Dispatcher.dispatcher.websocket_processor.dispatcher.add_event(db_event)

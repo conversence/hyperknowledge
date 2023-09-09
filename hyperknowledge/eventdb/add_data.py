@@ -10,7 +10,7 @@ import grequests
 from yaml import safe_load
 from sqlalchemy import select
 
-from .. import owner_scoped_session
+from hyperknowledge.eventdb import owner_scoped_session
 from .models import Struct, EventHandler, Term, Vocabulary, schema_defines_table
 from .schemas import HkSchema, EventHandlerSchemas
 from .make_tables import process_schema

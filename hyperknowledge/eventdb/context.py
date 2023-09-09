@@ -18,7 +18,7 @@ from rdflib.plugins.shared.jsonld.keys import CONTEXT
 from rdflib.plugins.shared.jsonld.context import Context as rdfContext
 from rdflib.plugins.shared.jsonld.util import source_to_json, urljoin
 
-from .. import owner_scoped_session
+from . import owner_scoped_session
 from .models import Struct, Vocabulary
 
 class Context(rdfContext):

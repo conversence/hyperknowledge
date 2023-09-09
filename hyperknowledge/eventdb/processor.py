@@ -26,8 +26,8 @@ from py_mini_racer import MiniRacer
 from fastapi.websockets import WebSocket, WebSocketState
 from starlette.websockets import WebSocketDisconnect
 
-from .. import config, owner_scoped_session, db_config_get, production
-from . import dbTopicId, as_tuple
+from .. import config, db_config_get, production
+from . import dbTopicId, as_tuple, owner_scoped_session
 from .models import (
     Base, EventProcessor, Event, Source, Term, Topic, EventHandler, UUIDentifier
 )

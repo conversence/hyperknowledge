@@ -20,8 +20,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.websockets import WebSocketDisconnect
 
 
-from .. import production, owner_scoped_session, db_config_get
-from . import PydanticURIRef
+from .. import production, db_config_get
+from . import PydanticURIRef, owner_scoped_session
 from .context import Context
 from .auth import agent_session, get_current_agent
 from .schemas import (
@@ -33,6 +33,10 @@ from .make_tables import read_existing_projections, KNOWN_DB_MODELS, process_sch
 from .auth import (
     get_token, Token, CurrentAgentType, CurrentActiveAgentType)
 from .processor import start_listen_thread, stop_listen_thread, forget_handler, WebSocketDispatcher
+
+logging.basicConfig()
+# logging.getLogger('sqlalchemy.engine').setLevel(logging.DEBUG)
+# logging.getLogger().handlers[0].setFormatter(logging.Formatter('%(asctime)s %(levelname)s:%(name)s:%(message)s'))
 
 log = logging.getLogger()
 

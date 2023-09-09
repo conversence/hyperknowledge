@@ -13,7 +13,8 @@ from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 
-from .. import db_config_get, client_scoped_session
+from .. import db_config_get
+from . import client_scoped_session
 from .schemas import (BaseModel, AgentModel, AgentModelWithPw, AgentModelOptional)
 from .models import Agent
 

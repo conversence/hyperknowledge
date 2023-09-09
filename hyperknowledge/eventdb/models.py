@@ -65,6 +65,7 @@ permission = ENUM(
     name='permission'
 )
 
+all_enums = [id_type, permission, event_handler_language, struct_type]
 
 class Topic(Base):
     """Anything that can be talked about or referred to is a topic. The root class.

@@ -22,7 +22,7 @@ def logger():
 @pytest.fixture(scope="session")
 async def sqla_engine(ini_file):
     os.environ["TARGET_DB"] = 'test'
-    from hyperknowledge import make_engine
+    from hyperknowledge.eventdb import make_engine
     engine = make_engine()
 
     try:
@@ -60,7 +60,7 @@ def init_database(sqla_engine, ini_file):
 
 @pytest.fixture(scope="function")
 async def clean_tables():
-    from hyperknowledge import owner_scoped_session
+    from hyperknowledge.eventdb import owner_scoped_session
     from hyperknowledge.eventdb.models import delete_data
     async with owner_scoped_session() as session:
         await delete_data(session)

@@ -11,8 +11,7 @@ from sqlalchemy.dialects.postgresql import (INTERVAL, TIMESTAMP, ARRAY, insert)
 from pydantic import json, BaseModel
 from rdflib.namespace import XSD, RDF, RDFS
 
-from .. import owner_scoped_session
-from . import dbTopicId, QName, PydanticURIRef, as_tuple, as_tuple_or_scalar
+from . import dbTopicId, QName, PydanticURIRef, as_tuple, as_tuple_or_scalar, owner_scoped_session
 from .models import Base, ProjectionMixin, ProjectionTable, Struct, schema_defines_table, Term, Topic
 from .schemas import (
     HkSchema, ProjectionAttributeSchema, ProjectionSchema, models_from_schemas, LangStringModel,

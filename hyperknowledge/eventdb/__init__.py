@@ -44,7 +44,7 @@ async def setup_connection_enums(conn):
 
 def make_engine(db=target_db, owner=True):
     engine = create_async_engine(engine_url(db, owner))
-    # cf https://github.com/MagicStack/asyncpg/issues/530
+    # cf https://github.com/MagicStack/asyncpg/issues/530#issuecomment-1424610433
 
     @event.listens_for(engine.sync_engine, "connect")
     def connect(conn, connection_record):

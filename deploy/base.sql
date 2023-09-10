@@ -34,6 +34,7 @@ CREATE TYPE public.id_type AS ENUM (
 
 CREATE TYPE public.struct_type AS ENUM (
     'hk_schema',
+    'hk_schema_element',
     'ontology',
     'ld_context',
     'other'

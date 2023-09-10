@@ -657,6 +657,8 @@ class WebSocketHandler():
                         await ws.send_json(dict(error=f"No such processor {processor}"))
                 elif base_cmd == 'close':
                     alive = False
+                elif base_cmd == 'ping':
+                    await ws.send_json(dict(pong=True))
                 else:
                     await ws.send_json(dict(error="Unknown command"))
         except WebSocketDisconnect:

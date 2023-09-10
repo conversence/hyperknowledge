@@ -17,7 +17,8 @@ from fastapi import FastAPI, HTTPException, Request, Depends, status, Response, 
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.websockets import WebSocket
 from fastapi.responses import HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.websockets import WebSocketDisconnect
 
 
@@ -168,16 +169,20 @@ async def lifespan(app: FastAPI):
     stop_listen_thread()
 
 
-app = FastAPI(lifespan=lifespan)
-
 # Permissive cors for now
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+middleware = [
+    Middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+]
+
+
+app = FastAPI(lifespan=lifespan, middleware=middleware)
+
 
 ACCESS_TOKEN_EXPIRE_MINUTES = db_config_get('token_minutes', 30)
 

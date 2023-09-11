@@ -34,7 +34,8 @@ from .models import (Source, Event, Struct, UUIDentifier, Term, Vocabulary, Topi
 from .make_tables import read_existing_projections, KNOWN_DB_MODELS, process_schema, db_to_projection
 from .auth import (
     get_token, Token, CurrentAgentType, CurrentActiveAgentType)
-from .processor import start_listen_thread, stop_listen_thread, forget_handler, WebSocketDispatcher
+from .processor import start_listen_thread, stop_listen_thread, forget_handler
+from .websockets import WebSocketDispatcher
 
 logging.basicConfig()
 # logging.getLogger('sqlalchemy.engine').setLevel(logging.DEBUG)

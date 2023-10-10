@@ -4,14 +4,14 @@ ENV     DEBIAN_FRONTEND noninteractive
 ARG	GITREPO=conversence/hyperknowledge
 ARG	GITBRANCH=main
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update -y && apt-get install -y \
             apt-utils \
             apt-transport-https \
             ca-certificates \
             python3.11 \
             python3.11-venv \
             postgresql-client && \
-            apt-get upgrade
+            apt-get upgrade -y
 WORKDIR /opt
 
 # copy files needed for pip-install process

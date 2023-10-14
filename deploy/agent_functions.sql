@@ -293,7 +293,7 @@ CREATE OR REPLACE FUNCTION public.after_delete_agent() RETURNS trigger
       oldagent := database || '__m_' || OLD.id;
       EXECUTE 'SET LOCAL ROLE ' || current_database() || '__rolemaster';
       EXECUTE 'DROP ROLE ' || oldagent;
-      EXECUTE 'SET LOCAL ROLE ' || curusser;
+      EXECUTE 'SET LOCAL ROLE ' || curuser;
       RETURN NEW;
     END;
     $$;

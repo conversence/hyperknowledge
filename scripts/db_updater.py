@@ -632,6 +632,8 @@ if __name__ == "__main__":
         action="append",
         help="deploy only this feature (and dependencies)",
     )
+    run_sqlp = subp.add_parser("run_sql", help="run a sql script")
+    run_sqlp.add_argument("-f", "--file", required=True)
     add_featurep = subp.add_parser("add_feature", help="create a new feature")
     add_featurep.add_argument("-f", "--feature", required=True)
     add_featurep.add_argument("-r", "--requirement", action="append")
@@ -732,6 +734,8 @@ if __name__ == "__main__":
             )
         elif args.command == "status":
             show_status(state, structures)
+        elif args.command == "run_sql":
+            psql_command(None, cmdfile=args.file, **conn_data)
         else:
             print("Not implemented")
             exit(1)

@@ -67,7 +67,7 @@ AS $$
     FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_auth_members m
     ON (m.member = r.oid)
     JOIN pg_roles r1 ON (m.roleid=r1.oid)
-    WHERE r1.rolname = current_database()||'__admin'
+    WHERE r1.rolname = current_database()||'__owner'
     AND r.rolname=current_user AND r.rolinherit;
 $$ LANGUAGE SQL STABLE;
 
@@ -196,7 +196,7 @@ CREATE OR REPLACE FUNCTION public.after_create_agent() RETURNS trigger
       EXECUTE 'CREATE ROLE ' || newagent || ' INHERIT IN GROUP ' || current_database() || '__member';
       EXECUTE 'ALTER GROUP ' || newagent || ' ADD USER ' || current_database() || '__client';
       IF 'admin' = ANY (NEW.permissions) THEN
-        EXECUTE 'ALTER GROUP '||current_database()||'__admin ADD USER ' || newagent;
+        EXECUTE 'ALTER GROUP '||current_database()||'__owner ADD USER ' || newagent;
       END IF;
       EXECUTE 'SET LOCAL ROLE ' || curuser;
       SELECT send_login_email(NEW.email) INTO temp;
@@ -228,10 +228,10 @@ CREATE OR REPLACE FUNCTION public.before_update_agent() RETURNS trigger
       END IF;
       EXECUTE 'SET LOCAL ROLE ' || current_database() || '__rolemaster';
       IF ('admin' = ANY(NEW.permissions)) AND NOT ('admin' = ANY(OLD.permissions)) THEN
-        EXECUTE 'ALTER GROUP '||current_database()||'__admin ADD USER ' || current_database() || '__m_' || NEW.id;
+        EXECUTE 'ALTER GROUP '||current_database()||'__owner ADD USER ' || current_database() || '__m_' || NEW.id;
       END IF;
       IF ('admin' = ANY(OLD.permissions)) AND NOT ('admin' = ANY(NEW.permissions)) THEN
-        EXECUTE 'ALTER GROUP '||current_database()||'__admin DROP USER ' || current_database() || '__m_' || NEW.id;
+        EXECUTE 'ALTER GROUP '||current_database()||'__owner DROP USER ' || current_database() || '__m_' || NEW.id;
       END IF;
       EXECUTE 'SET LOCAL ROLE ' || curuser;
       RETURN NEW;

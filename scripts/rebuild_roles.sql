@@ -24,7 +24,7 @@ BEGIN
     EXECUTE 'CREATE ROLE ' || role_name || ' INHERIT IN GROUP ' || current_database() || '__member';
     EXECUTE 'ALTER GROUP ' || role_name || ' ADD USER ' || current_database() || '__client';
     IF temp THEN
-      EXECUTE 'ALTER GROUP '||current_database()||'__admin ADD USER ' || role_name;
+      EXECUTE 'ALTER GROUP '||current_database()||'__owner ADD USER ' || role_name;
     END IF;
   END LOOP;
   EXECUTE 'SET LOCAL ROLE ' || curuser;

@@ -1,16 +1,17 @@
-FROM    debian:bookworm-slim
+FROM debian:bookworm-slim
 
-ENV     DEBIAN_FRONTEND noninteractive
+ENV DEBIAN_FRONTEND noninteractive
 ARG	GITREPO=conversence/hyperknowledge
 ARG	GITBRANCH=main
 
-RUN apt-get update -y && apt-get install -y \
-            apt-utils \
-            apt-transport-https \
-            ca-certificates \
+RUN apt-get update -y  && \
+    apt install -y apt-utils postgresql-common apt-transport-https ca-certificates && \
+    /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y && \
+    apt-get update -y && \
+    apt-get install -y \
             python3.11 \
             python3.11-venv \
-            postgresql-client && \
+            postgresql-client-16 && \
             apt-get upgrade -y
 WORKDIR /opt
 

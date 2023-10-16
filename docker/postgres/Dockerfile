@@ -1,4 +1,4 @@
-FROM postgres:15.4-alpine
+FROM postgres:16.0-alpine
 COPY docker-healthcheck /usr/local/bin/
 RUN apk add curl tar make bash && \
   curl -L  https://github.com/michelp/pgjwt/tarball/master -o pgjwt.tgz && \

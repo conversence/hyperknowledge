@@ -1,15 +1,27 @@
-FROM postgres:16.0-alpine
-COPY docker-healthcheck /usr/local/bin/
-RUN apk add curl tar make bash && \
+FROM postgres:16.0-alpine as build
+RUN apk add curl tar make bash clang15 llvm15 musl-dev && \
   curl -L  https://github.com/michelp/pgjwt/tarball/master -o pgjwt.tgz && \
   tar zxf pgjwt.tgz && \
-  cd michelp-pgjwt-* && \
-  make install && \
+  mv michelp-pgjwt-* pgjwt && \
+  cd pgjwt && \
+  make && \
   cd .. && \
-  rm -rf michelp-pgjwt-* && \
-  curl -L -O https://github.com/fboulnois/pg_uuidv7/releases/download/v1.1.1/pg_uuidv7.tar.gz && \
-  tar zxf pg_uuidv7.tar.gz && \
-  mv pg_uuidv7.so `pg_config --pkglibdir` && \
-  mv pg_uuidv7*.sql pg_uuidv7.control `pg_config --sharedir`/extension && \
-  rm pg_uuidv7.tar.gz
+  curl -L https://github.com/fboulnois/pg_uuidv7/tarball/master -o pg_uuidv7.tgz && \
+  tar zxf pg_uuidv7.tgz && \
+  mv fboulnois-pg_uuidv7-* uuidv7 && \
+  cd uuidv7 && \
+  make && \
+  /usr/lib/llvm15/bin/llvm-lto -thinlto -thinlto-action=thinlink -o pg_uuidv7.index.bc pg_uuidv7.bc
+
+FROM postgres:16.0-alpine
+COPY docker-healthcheck /usr/local/bin/
+COPY --from=build /pgjwt /pgjwt
+COPY --from=build /uuidv7 /uuidv7
+RUN apk add make && \
+  cd /pgjwt && \
+  make install && \
+  cd /uuidv7 && \
+  mkdir -p /usr/local/lib/postgresql/bitcode && \
+  /usr/bin/install -c -m 644 pg_uuidv7.index.bc /usr/local/lib/postgresql/bitcode && \
+  make -k install || true
 HEALTHCHECK CMD ["docker-healthcheck"]

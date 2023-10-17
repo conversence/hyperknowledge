@@ -287,7 +287,7 @@ async def get_local_sources(current_agent: CurrentAgentType) -> Dict[str, Pydant
 @app.get("/source/{source_name}")
 async def get_local_source(source_name: str, current_agent: CurrentAgentType) -> LocalSourceModel:
     async with agent_session(current_agent) as session:
-        source = await session.execute(select(Source).filter_by(local_name=source_name))
+        source = await session.execute(select(Source).filter_by(local_name=source_name).options(joinedload(Source.creator)))
         if source := source.first():
             return LocalSourceModel.model_validate(source[0])
         raise HTTPException(status_code=404, detail="Source does not exist")

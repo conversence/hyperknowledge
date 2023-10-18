@@ -38,7 +38,7 @@ def init_database(sqla_engine, ini_file):
     from db_updater import get_connection_data, db_state, read_structure, init_db, deploy, revert
     db = 'test'
     conn_data = get_connection_data(ini_file, db)
-    admin_conn_data = get_connection_data(ini_file, db, False, True)
+    admin_conn_data = get_connection_data(ini_file, db, admin_password=True)
     init_db(conn_data)
     structures = read_structure()
     deploy(

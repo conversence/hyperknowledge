@@ -8,7 +8,7 @@ volumes:
 
 services:
   postgres:
-    image: conversence/postgres:16.0-alpine-jwt-uuid7
+    image: conversence/postgres:16.1-alpine-jwt-uuid7
     environment:
       POSTGRES_PASSWORD: postgres
     volumes:

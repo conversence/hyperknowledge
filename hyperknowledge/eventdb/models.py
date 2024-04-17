@@ -10,7 +10,9 @@ from sqlalchemy import ForeignKey, String, Text, Boolean, Integer, Table, Column
 from sqlalchemy.sql.functions import func, GenericFunction
 from sqlalchemy.sql.expression import join, column
 from sqlalchemy.ext.hybrid import hybrid_property, hybrid_method
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, declared_attr, foreign, remote, joinedload, aliased, column_property
+from sqlalchemy.orm import (
+    DeclarativeBase, Mapped, mapped_column, relationship, declared_attr, foreign, remote, joinedload,
+    aliased, column_property, with_polymorphic)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, ENUM, UUID, TIMESTAMP, BYTEA
 from sqlalchemy_utils import LtreeType
 
@@ -491,8 +493,8 @@ class ProjectionMixin:
 
 async def delete_data(session):
     # Delete structures separately to delete generated tables and their dependencies
-    await session.execute(delete(Topic).filter(Topic.id.in_(select(Struct.id).filter_by(subtype='hk_schema'))))
-    await session.execute(delete(Topic))
+    await session.execute(delete(Topic.__table__).filter(Topic.__table__.c.id.in_(select(Struct.id).filter_by(subtype='hk_schema'))))
+    await session.execute(delete(Topic.__table__))
     await session.execute(delete(Agent).filter(Agent.id > 0))
     await session.execute(delete(EventProcessor).filter(EventProcessor.owner_id > 0))
     await session.execute(update(EventProcessor).values(last_event_ts = None))

@@ -1,11 +1,10 @@
 """FastAPI server authentification"""
 
 from typing import Optional, Annotated
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager, suppress
 
 import anyio
-from datetime import timezone
 from sqlalchemy import select, text
 from sqlalchemy.sql.functions import func
 from fastapi import HTTPException, Depends, status

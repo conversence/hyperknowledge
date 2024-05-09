@@ -17,11 +17,14 @@ FROM postgres:16.2-alpine
 COPY docker-healthcheck /usr/local/bin/
 COPY --from=build /pgjwt /pgjwt
 COPY --from=build /uuidv7 /uuidv7
-RUN apk add make && \
+RUN /usr/local/lib/postgresql/pgxs/config/install-sh -c -d '/usr/local/share/postgresql/extension' && \
+  /usr/local/lib/postgresql/pgxs/config/install-sh -c -d '/usr/local/lib/postgresql' && \
+  /usr/local/lib/postgresql/pgxs/config/install-sh -c -d '/usr/local/lib/postgresql/bitcode' && \
   cd /pgjwt && \
-  make install && \
+  /usr/bin/install -c -m 644 ./pgjwt.control ./pgjwt--*.sql '/usr/local/share/postgresql/extension/' && \
   cd /uuidv7 && \
-  mkdir -p /usr/local/lib/postgresql/bitcode && \
-  /usr/bin/install -c -m 644 pg_uuidv7.index.bc /usr/local/lib/postgresql/bitcode && \
-  make -k install || true
-HEALTHCHECK CMD ["docker-healthcheck"]
+  /usr/bin/install -c -m 644 ./pg_uuidv7.index.bc '/usr/local/lib/postgresql/bitcode' && \
+  /usr/bin/install -c -m 644 ./pg_uuidv7.control ./sql/pg_uuidv7--*.sql '/usr/local/share/postgresql/extension/' && \
+  /usr/bin/install -c -m 755 ./pg_uuidv7.so '/usr/local/lib/postgresql/' && \
+  cd / && rm -rf /pgjwt /uuidv7
+  HEALTHCHECK CMD ["docker-healthcheck"]

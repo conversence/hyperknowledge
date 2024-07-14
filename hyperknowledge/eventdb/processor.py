@@ -2,6 +2,7 @@
 
 This happens on a thread, with attendant machinery.
 """
+
 from __future__ import annotations
 
 from threading import Thread
@@ -24,18 +25,23 @@ from py_mini_racer import MiniRacer
 
 from .. import config, db_config_get, production
 from . import as_tuple, owner_scoped_session
-from .models import (
-    Base, EventProcessor, Event, Term, Topic, EventHandler, UUIDentifier
+from .models import Base, EventProcessor, Event, Term, Topic, EventHandler, UUIDentifier
+from .schemas import (
+    getEventModel,
+    HkSchema,
+    getProjectionSchemas,
+    ProjectionSchema,
+    EventAttributeSchema,
 )
-from .schemas import getEventModel, HkSchema, getProjectionSchemas, ProjectionSchema, EventAttributeSchema
 from .make_tables import KNOWN_DB_MODELS, db_to_projection, projection_to_db
 
 log = logging.getLogger("hyperknowledge.eventdb.processor")
 
+
 class QueuePosition(Enum):
-    start = 'start'
-    current = 'current'
-    last = 'last'
+    start = "start"
+    current = "current"
+    last = "last"
 
 
 class lifecycle(IntEnum):
@@ -46,11 +52,12 @@ class lifecycle(IntEnum):
     cancelled = 4
 
 
-class AbstractProcessorQueue():
+class AbstractProcessorQueue:
     """A cache for event processors.
     Should know about last known event and last fetched event.
     If they correspond, the cache is caught up.
     """
+
     def __init__(self, proc: EventProcessor = None, queue_size=10) -> None:
         super(AbstractProcessorQueue, self).__init__()
         self.proc = proc
@@ -65,7 +72,11 @@ class AbstractProcessorQueue():
         self.status = lifecycle.before
 
     def add_event(self, event: Event) -> None:
-        if self.started and (self.last_fetched is None or self.last_fetched == self.last_seen) and not self.queue.full():
+        if (
+            self.started
+            and (self.last_fetched is None or self.last_fetched == self.last_seen)
+            and not self.queue.full()
+        ):
             self.queue.put_nowait(event)
             self.last_fetched = event.created
         self.set_last_seen(event.created)
@@ -82,15 +93,24 @@ class AbstractProcessorQueue():
                 self.last_seen = await session.scalar(max_date_q)
                 if self.proc:
                     self.last_processed = EventProcessor.last_event_ts
-            event_query = select(Event).order_by(Event.created).limit(self.max_size - self.queue.qsize())
+            event_query = (
+                select(Event)
+                .order_by(Event.created)
+                .limit(self.max_size - self.queue.qsize())
+            )
             if self.last_processed is not None:
-                event_query = event_query.filter(Event.created > (self.last_fetched or self.last_processed)).order_by(Event.created)
+                event_query = event_query.filter(
+                    Event.created > (self.last_fetched or self.last_processed)
+                ).order_by(Event.created)
             if self.source:
                 event_query = self.source.filter_event_query(event_query)
-            events = await session.execute(event_query.options(
-                joinedload(Event.event_type).joinedload(Term.schema),
-                joinedload(Event.source),
-                joinedload(Event.creator)))
+            events = await session.execute(
+                event_query.options(
+                    joinedload(Event.event_type).joinedload(Term.schema),
+                    joinedload(Event.source),
+                    joinedload(Event.creator),
+                )
+            )
             for (event,) in events:
                 await self.queue.put(event)
                 self.last_fetched = event.created
@@ -106,12 +126,13 @@ class AbstractProcessorQueue():
             return self.in_process
         if not self.started or (
             # Catching up, empty queue
-            self.queue.qsize() == 0 and self.last_seen is not None and (
-                self.last_fetched is None or self.last_fetched < self.last_seen)
+            self.queue.qsize() == 0
+            and self.last_seen is not None
+            and (self.last_fetched is None or self.last_fetched < self.last_seen)
         ):
             await self.fetch_events()
         # Caught up
-        self.in_process =  await self.queue.get()
+        self.in_process = await self.queue.get()
         return self.in_process
 
     async def ack_event(self, event: Event, session=None):
@@ -126,7 +147,10 @@ class AbstractProcessorQueue():
         if self.proc:
             self.proc.last_event_ts = last_timestamp
             await session.execute(
-                update(EventProcessor).where(EventProcessor.id==self.proc.id).values(last_event_ts=last_timestamp))
+                update(EventProcessor)
+                .where(EventProcessor.id == self.proc.id)
+                .values(last_event_ts=last_timestamp)
+            )
         self.queue.task_done()
         self.in_process = None
 
@@ -143,10 +167,10 @@ class AbstractProcessorQueue():
         self.status = lifecycle.cancelling
 
 
-
 class PushProcessorQueue(AbstractProcessorQueue):
-
-    def __init__(self, proc: EventProcessor = None, queue_size=10, autoack=True) -> None:
+    def __init__(
+        self, proc: EventProcessor = None, queue_size=10, autoack=True
+    ) -> None:
         super().__init__(proc, queue_size)
         self.autoack = autoack
         self.ack_wait_event = None
@@ -161,7 +185,10 @@ class PushProcessorQueue(AbstractProcessorQueue):
             self.ack_wait_event.set()
 
     async def run(self):
-        while self.status < lifecycle.cancelling and not self.tg.cancel_scope.cancel_called:
+        while (
+            self.status < lifecycle.cancelling
+            and not self.tg.cancel_scope.cancel_called
+        ):
             event = await self.get_event()
             async with owner_scoped_session() as session:
                 try:
@@ -170,6 +197,7 @@ class PushProcessorQueue(AbstractProcessorQueue):
                     log.exception(e)
                     if not production:
                         import pdb
+
                         pdb.post_mortem()
                 if self.autoack:
                     await self.ack_event(event, session)
@@ -192,6 +220,7 @@ class PushProcessorQueue(AbstractProcessorQueue):
     async def process_event(self, db_event: Event, session):
         pass
 
+
 class ProjectionProcessor(PushProcessorQueue):
     def __init__(self, proc: EventProcessor = None, queue_size=10):
         super(ProjectionProcessor, self).__init__(proc=proc, queue_size=queue_size)
@@ -207,9 +236,11 @@ class ProjectionProcessor(PushProcessorQueue):
         # get the event's schema
         hk_schema = HkSchema.model_validate(db_event.event_type.schema.value)
         # event_type = hk_schema.context.shrink_iri(event.data.type)
-        event_hk_schema = hk_schema.eventSchemas[event.data.type.split(':')[1]]
+        event_hk_schema = hk_schema.eventSchemas[event.data.type.split(":")[1]]
         projection_schemas = getProjectionSchemas()
-        range_schemas_by_role: Dict[str, List[Tuple[ProjectionSchema, BaseModel, type[Base]]]] = {}
+        range_schemas_by_role: Dict[
+            str, List[Tuple[ProjectionSchema, BaseModel, type[Base]]]
+        ] = {}
         topic_by_role: Dict[str, Topic] = {}
         attrib_schema_by_name: Dict[str, EventAttributeSchema] = {}
         for attrib_schema in event_hk_schema.attributes:
@@ -233,14 +264,18 @@ class ProjectionProcessor(PushProcessorQueue):
                 continue
             entity_id = await Topic.get_by_uri(session, value)
             if not entity_id:
-                if attrib_schema.create and value.startswith('urn:uuid:'):
+                if attrib_schema.create and value.startswith("urn:uuid:"):
                     entity_id = await UUIDentifier.ensure_url(session, value)
                 else:
                     log.warning("Missing topic: %s", value)
                     continue
             topic_by_role[attrib_schema.name] = entity_id
         # TODO: Cache handlers, make the handlers per source
-        r = await session.execute(select(EventHandler).filter_by(event_type_id=db_event.event_type_id).options(joinedload(EventHandler.target_range)))
+        r = await session.execute(
+            select(EventHandler)
+            .filter_by(event_type_id=db_event.event_type_id)
+            .options(joinedload(EventHandler.target_range))
+        )
         handlers: List[EventHandler] = r.scalars().all()
         # Note the event may come from another session
         db_event2 = await session.merge(db_event)
@@ -249,52 +284,83 @@ class ProjectionProcessor(PushProcessorQueue):
             db_object_by_role: Dict[str, Base] = {}
             projection_by_role: Dict[str, Json] = {}
             updated_projection_by_role: Dict[str, Json] = {}
-            used_projection_data_by_role: Dict[str, Tuple[ProjectionSchema, BaseModel, type[Base]]] = {}
+            used_projection_data_by_role: Dict[
+                str, Tuple[ProjectionSchema, BaseModel, type[Base]]
+            ] = {}
             for attrib_schema in event_hk_schema.attributes:
-                projection_data: List[Tuple[ProjectionSchema, BaseModel, type[Base]]] = range_schemas_by_role.get(attrib_schema.name)
+                projection_data: List[
+                    Tuple[ProjectionSchema, BaseModel, type[Base]]
+                ] = range_schemas_by_role.get(attrib_schema.name)
                 if not projection_data:
                     continue
                 topic = topic_by_role.get(attrib_schema.name)
                 if not topic:
                     if attrib_schema.create:
-                        used_projection_data_by_role[attrib_schema.name] = projection_data[0]
+                        used_projection_data_by_role[attrib_schema.name] = (
+                            projection_data[0]
+                        )
                     continue
                 # TODO: Check that range's id is in topic's as_projection
                 for range_schema, range_model, range_db_model in projection_data:
                     # TODO: Use Topic.has_projections to avoid a few loops
-                    db_projection = await session.scalar(select(range_db_model).filter_by(id=entity_id.id, source_id=source.id, obsolete=None))
+                    db_projection = await session.scalar(
+                        select(range_db_model).filter_by(
+                            id=entity_id.id, source_id=source.id, obsolete=None
+                        )
+                    )
                     if db_projection:
                         # Note: Using first matching projection. What happens if there are many matches
-                        used_projection_data_by_role[attrib_schema.name] = (range_schema, range_model, range_db_model)
-                        pd_projection = await db_to_projection(session, db_projection, range_model, range_schema)
+                        used_projection_data_by_role[attrib_schema.name] = (
+                            range_schema,
+                            range_model,
+                            range_db_model,
+                        )
+                        pd_projection = await db_to_projection(
+                            session, db_projection, range_model, range_schema
+                        )
                         db_object_by_role[attrib_schema.name] = db_projection
-                        projection_by_role[attrib_schema.name] = pd_projection.model_dump(by_alias=True)
+                        projection_by_role[attrib_schema.name] = (
+                            pd_projection.model_dump(by_alias=True)
+                        )
                         break
                 else:
                     if attrib_schema.create:
-                        used_projection_data_by_role[attrib_schema.name] = projection_data[0]
+                        used_projection_data_by_role[attrib_schema.name] = (
+                            projection_data[0]
+                        )
                     else:
-                        log.warn(f"Missing projections for {attrib_schema} in {db_event}")
+                        log.warn(
+                            f"Missing projections for {attrib_schema} in {db_event}"
+                        )
                         continue
             # apply the handlers
             for handler in handlers:
-                if handler.language != 'javascript':
+                if handler.language != "javascript":
                     raise NotImplementedError()
                 handler_fname = f"handler_{handler.id}"
                 if handler.id not in self.loaded_handlers:
-                    handler_txt = handler.code_text.replace('function handler(', f'function {handler_fname}(')
+                    handler_txt = handler.code_text.replace(
+                        "function handler(", f"function {handler_fname}("
+                    )
                     self.js_ctx.eval(handler_txt)
                     self.loaded_handlers.add(handler.id)
                 target_attrib_schema = attrib_schema_by_name[handler.target_role]
-                if handler.target_role not in projection_by_role and not target_attrib_schema.create:
+                if (
+                    handler.target_role not in projection_by_role
+                    and not target_attrib_schema.create
+                ):
                     continue
                 js = f"{handler_fname}({event.model_dump_json(by_alias=True, exclude_unset=True)}, {dumps(projection_by_role)})"
                 result = self.js_ctx.execute(js)
                 # Convenience so the handler does not have to do it
                 if result["@type"] == event.data.type:
-                    result["@type"] = hk_schema.context.shrink_iri(handler.target_range.uri)
+                    result["@type"] = hk_schema.context.shrink_iri(
+                        handler.target_range.uri
+                    )
                 # Use either create or update model according to whether it exists
-                range_schema, range_model, range_db_model = used_projection_data_by_role[handler.target_role]
+                range_schema, range_model, range_db_model = (
+                    used_projection_data_by_role[handler.target_role]
+                )
                 new_projection = range_model.model_validate(result)
                 db_data = await projection_to_db(session, new_projection, range_schema)
                 if handler.target_role in db_object_by_role:
@@ -303,11 +369,17 @@ class ProjectionProcessor(PushProcessorQueue):
                         setattr(db_projection, k, v)
                 else:
                     db_projection = range_db_model(
-                        id= topic_by_role[handler.target_role].id,source_id=source.id, event_time=db_event.created ,**db_data)
+                        id=topic_by_role[handler.target_role].id,
+                        source_id=source.id,
+                        event_time=db_event.created,
+                        **db_data,
+                    )
                     session.add(db_projection)
                 # Should I update the current one? It introduces order-dependence, so no.
                 # THOUGH I could do it for missing values first?
-                updated_projection_by_role[handler.target_role] = new_projection.model_dump()
+                updated_projection_by_role[handler.target_role] = (
+                    new_projection.model_dump()
+                )
                 # TODO: Make sure the projection type is in the topic
 
     def after_event(self, db_event: Event):
@@ -316,6 +388,7 @@ class ProjectionProcessor(PushProcessorQueue):
 
 class Dispatcher(AbstractProcessorQueue, Thread):
     dispatcher = None
+
     def __init__(self):
         super(Dispatcher, self).__init__()
         assert Dispatcher.dispatcher is None, "Singleton"
@@ -328,13 +401,14 @@ class Dispatcher(AbstractProcessorQueue, Thread):
 
     def set_status(self, status: lifecycle):
         log.debug("Dispatcher status: %s", status)
-        assert status >= self.status or (self.status == lifecycle.active and status == lifecycle.started)
+        assert status >= self.status or (
+            self.status == lifecycle.active and status == lifecycle.started
+        )
         self.status = status
 
     def run(self) -> None:
         # Running in thread
         anyio.run(self.main_task)
-
 
     def add_processor(self, proc: AbstractProcessorQueue):
         # assert self.status >= lifecycle.started
@@ -352,15 +426,17 @@ class Dispatcher(AbstractProcessorQueue, Thread):
     async def main_task(self) -> None:
         # Running in thread's event loop
         task = asyncio.current_task()
-        task.get_loop().name = 'dispatcher_loop'
+        task.get_loop().name = "dispatcher_loop"
         # TODO: Replace with the engine's connection, maybe?
         self.listener = asyncpg_listen.NotificationListener(
             asyncpg_listen.connect_func(
-                user=db_config_get('owner'),
-                password=db_config_get('owner_password'),
-                host=config.get('postgres', 'host'),
-                port=config.get('postgres', 'port'),
-                database=db_config_get('database')))
+                user=db_config_get("owner"),
+                password=db_config_get("owner_password"),
+                host=config.get("postgres", "host"),
+                port=config.get("postgres", "port"),
+                database=db_config_get("database"),
+            )
+        )
         async with BlockingPortal() as portal:
             self.portal = portal
             async with anyio.create_task_group() as tg:
@@ -371,13 +447,12 @@ class Dispatcher(AbstractProcessorQueue, Thread):
 
         self.set_status(lifecycle.cancelled)
 
-
     async def setup_main_processors(self):
         from .websockets import WebSocketDispatcher
 
         async with owner_scoped_session() as session:
             projection_processor = await session.get(EventProcessor, 0)
-            await session.refresh(projection_processor, ['source'])
+            await session.refresh(projection_processor, ["source"])
         self.projection_processor = ProjectionProcessor(projection_processor)
         self.tg.start_soon(self.projection_processor.start_processor, self.tg)
         self.websocket_processor = WebSocketDispatcher()
@@ -386,10 +461,10 @@ class Dispatcher(AbstractProcessorQueue, Thread):
 
     async def do_listen(self):
         await self.listener.run(
-                {"events": self.handle_notifications},
-                policy=asyncpg_listen.ListenPolicy.LAST,
-                notification_timeout=5
-                )
+            {"events": self.handle_notifications},
+            policy=asyncpg_listen.ListenPolicy.LAST,
+            notification_timeout=5,
+        )
         await anyio.sleep_forever()
 
     def stop_task(self):
@@ -403,14 +478,22 @@ class Dispatcher(AbstractProcessorQueue, Thread):
         self.tg.cancel_scope.cancel()
         self.set_status(lifecycle.cancelled)
 
-    async def handle_notifications(self, notification: asyncpg_listen.NotificationOrTimeout) -> None:
-        if self.status >= lifecycle.cancelling or isinstance(notification, asyncpg_listen.Timeout):
+    async def handle_notifications(
+        self, notification: asyncpg_listen.NotificationOrTimeout
+    ) -> None:
+        if self.status >= lifecycle.cancelling or isinstance(
+            notification, asyncpg_listen.Timeout
+        ):
             return
         self.set_status(lifecycle.active)
-        latest_timestamp = datetime.fromisoformat(f'{notification.payload}00000'[:26])
+        latest_timestamp = datetime.fromisoformat(f"{notification.payload}00000"[:26])
         self.set_last_seen(latest_timestamp)
         # fetch events on everyone's behalf
-        while self.status < lifecycle.cancelling and (self.queue.qsize() > 0 or self.last_fetched is None or self.last_fetched < self.last_seen):
+        while self.status < lifecycle.cancelling and (
+            self.queue.qsize() > 0
+            or self.last_fetched is None
+            or self.last_fetched < self.last_seen
+        ):
             event = await self.get_event()
             # Do the projections first
             self.projection_processor.add_event(event)
@@ -425,9 +508,11 @@ def start_listen_thread():
     p = Dispatcher()
     p.start()
 
+
 def stop_listen_thread():
     assert Dispatcher.dispatcher, "Not started!"
     Dispatcher.dispatcher.stop_task()
+
 
 def forget_handler(handler_id: int):
     assert Dispatcher.dispatcher, "Not started!"

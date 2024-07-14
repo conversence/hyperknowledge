@@ -13,39 +13,47 @@ from jose import jwt, JWTError
 
 from .. import db_config_get
 from . import client_scoped_session
-from .schemas import (BaseModel, AgentModel, AgentModelWithPw, AgentModelOptional)
+from .schemas import BaseModel, AgentModel, AgentModelWithPw, AgentModelOptional
 from .models import Agent
 
-SECRET_KEY = db_config_get('auth_secret')
+SECRET_KEY = db_config_get("auth_secret")
 ALGORITHM = "HS256"
+
 
 class Token(BaseModel):
     access_token: str
     token_type: str
 
+
 class TokenData(BaseModel):
     id: int
 
+
 # 2a allows compatibility with pg_crypto if I want to check in DB
-pwd_context = CryptContext(schemes=['bcrypt'], deprecated='auto', bcrypt__ident='2a')
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__ident="2a")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
+
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
+
 def get_password_hash(password):
     return pwd_context.hash(password)
 
+
 async def get_agent(session, agent_id: int) -> AgentModel:
-      agent = await session.get(Agent, agent_id)
-      if agent:
-          return AgentModel.model_validate(agent)
+    agent = await session.get(Agent, agent_id)
+    if agent:
+        return AgentModel.model_validate(agent)
+
 
 async def get_agent_by_username(session, username: str) -> AgentModelWithPw:
-      agent = await session.execute(select(Agent).filter_by(username=username))
-      if agent := agent.first():
-          return AgentModelWithPw.model_validate(agent[0])
+    agent = await session.execute(select(Agent).filter_by(username=username))
+    if agent := agent.first():
+        return AgentModelWithPw.model_validate(agent[0])
+
 
 async def authenticate_agent(session, username: str, password: str):
     agent = await get_agent_by_username(session, username)
@@ -66,7 +74,9 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-async def get_current_agent(token: Annotated[str, Depends(oauth2_scheme)]) -> Optional[AgentModel]:
+async def get_current_agent(
+    token: Annotated[str, Depends(oauth2_scheme)],
+) -> Optional[AgentModel]:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -76,8 +86,8 @@ async def get_current_agent(token: Annotated[str, Depends(oauth2_scheme)]) -> Op
         if not token:
             return None
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        subtype, subid = payload.get("sub").split(':', 1)
-        assert subtype == 'agent'
+        subtype, subid = payload.get("sub").split(":", 1)
+        assert subtype == "agent"
         user_id: int = int(subid)
         if user_id is None:
             raise credentials_exception
@@ -92,13 +102,14 @@ async def get_current_agent(token: Annotated[str, Depends(oauth2_scheme)]) -> Op
 
 
 async def get_current_active_agent(
-    current_agent: Annotated[AgentModelWithPw, Depends(get_current_agent)]
+    current_agent: Annotated[AgentModelWithPw, Depends(get_current_agent)],
 ) -> AgentModel:
     if not current_agent:
         raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-          detail="Please login",
-          headers={"WWW-Authenticate": "Bearer"})
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Please login",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if not current_agent.confirmed:
         raise HTTPException(status_code=400, detail="Not confirmed")
     return current_agent
@@ -106,18 +117,22 @@ async def get_current_active_agent(
 
 async def get_token(username, password, expiration_minutes=30):
     async with client_scoped_session() as session:
-        token = await session.scalar(select(func.get_token(username, password, expiration_minutes)))
+        token = await session.scalar(
+            select(func.get_token(username, password, expiration_minutes))
+        )
         if token:
-            await session.commit()   # Updating last_login
+            await session.commit()  # Updating last_login
         return token
 
 
 CurrentAgentType = Annotated[AgentModel, Depends(get_current_agent)]
 CurrentActiveAgentType = Annotated[AgentModel, Depends(get_current_active_agent)]
 
+
 async def set_role(session, agent_name: str):
-    db_name = str(session.bind.engine.url).split('/')[-1]
+    db_name = str(session.bind.engine.url).split("/")[-1]
     await session.execute(text(f"SET ROLE {db_name}__{agent_name}"))
+
 
 @asynccontextmanager
 async def agent_session(agent: Optional[AgentModel]):
@@ -132,6 +147,7 @@ async def agent_session(agent: Optional[AgentModel]):
                     await session.rollback()
                     await set_role(session, "client")
                     await session.commit()
+
 
 @asynccontextmanager
 async def escalated_session(session):

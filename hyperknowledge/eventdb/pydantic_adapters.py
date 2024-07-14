@@ -1,4 +1,5 @@
 """Make URIRef into a pydantic-friendly type"""
+
 from typing import (
     Any,
 )
@@ -12,7 +13,6 @@ from rdflib import URIRef
 
 from pydantic import GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
-
 
 
 class _URIRefPydanticAnnotation:
@@ -32,7 +32,7 @@ class _URIRefPydanticAnnotation:
         """
 
         def validate_from_str(value: str) -> URIRef:
-            if value.startswith('urn:uuid:'):
+            if value.startswith("urn:uuid:"):
                 # Check validity
                 UUID(value[9:])
             return URIRef(value)
@@ -66,6 +66,4 @@ class _URIRefPydanticAnnotation:
         return handler(core_schema.str_schema())
 
 
-PydanticURIRef = Annotated[
-    URIRef, _URIRefPydanticAnnotation
-]
+PydanticURIRef = Annotated[URIRef, _URIRefPydanticAnnotation]

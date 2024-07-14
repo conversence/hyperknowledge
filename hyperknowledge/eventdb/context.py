@@ -55,13 +55,15 @@ async def fetch_context(url: URIRef):
     async with owner_scoped_session() as session:
         engine = session.bind
         vocab = await Vocabulary.ensure(session, url)
-        r = await session.execute(select(Struct).filter_by(is_vocab=vocab.id, subtype='ld_context'))
+        r = await session.execute(
+            select(Struct).filter_by(is_vocab=vocab.id, subtype="ld_context")
+        )
         if context_struct := r.first():
             data = context_struct[0].value
         else:
             # TODO: wrap in async? in thread?
             data = source_to_json(url)
-            session.add(Struct(value=data, subtype='ld_context', is_vocab=vocab.id))
+            session.add(Struct(value=data, subtype="ld_context", is_vocab=vocab.id))
             await session.commit()
     await owner_scoped_session.remove()
     await engine.dispose()
@@ -71,9 +73,11 @@ async def fetch_context(url: URIRef):
 def get_context_data(url: URIRef):
     # This is a convoluted way to call an async function in a sync context
     result = None
+
     def work():
         nonlocal result
         result = anyio.run(fetch_context, url)
+
     t = Thread(target=work)
     t.start()
     t.join()

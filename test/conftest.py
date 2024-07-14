@@ -2,11 +2,13 @@ import asyncio
 
 import pytest
 
+
 @pytest.fixture(scope="session")
 def ini_file():
     from configparser import ConfigParser
     from pathlib import Path
-    CONFIG_FILE = Path('config.ini')
+
+    CONFIG_FILE = Path("config.ini")
     assert CONFIG_FILE.exists, "Please run initial_setup"
     ini_file = ConfigParser()
     with CONFIG_FILE.open() as f:
@@ -17,8 +19,7 @@ def ini_file():
 
 @pytest.fixture(scope="session")
 def anyio_backend():
-    return 'asyncio'
-
+    return "asyncio"
 
 
 @pytest.fixture(scope="session")
@@ -30,5 +31,6 @@ def event_loop():
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
+
 
 from .fixtures import *

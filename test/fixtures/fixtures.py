@@ -49,7 +49,7 @@ def init_database(sqla_engine, ini_file):
         admin_conn_data=admin_conn_data
     )
     yield
-    state = db_state(conn_data)
+    db_state(conn_data)
     revert(
         structures,
         db_state(conn_data),
@@ -64,11 +64,11 @@ async def clean_tables():
     from hyperknowledge.eventdb.models import delete_data
     async with owner_scoped_session() as session:
         await delete_data(session)
-    owner_scoped_session.remove()
+    await owner_scoped_session.remove()
     yield True
     async with owner_scoped_session() as session:
         await delete_data(session)
-    owner_scoped_session.remove()
+    await owner_scoped_session.remove()
 
 
 @pytest.fixture(scope="module")

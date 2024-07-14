@@ -10,7 +10,6 @@ import anyio
 from sqlalchemy import select
 from rdflib import URIRef
 from rdflib.plugins.shared.jsonld.errors import (
-    INVALID_CONTEXT_ENTRY,
     INVALID_REMOTE_CONTEXT,
     RECURSIVE_CONTEXT_INCLUSION,
 )
@@ -20,6 +19,7 @@ from rdflib.plugins.shared.jsonld.util import source_to_json, urljoin
 
 from . import owner_scoped_session
 from .models import Struct, Vocabulary
+
 
 class Context(rdfContext):
     def _fetch_context(
@@ -63,7 +63,7 @@ async def fetch_context(url: URIRef):
             data = source_to_json(url)
             session.add(Struct(value=data, subtype='ld_context', is_vocab=vocab.id))
             await session.commit()
-    owner_scoped_session.remove()
+    await owner_scoped_session.remove()
     await engine.dispose()
     return data
 

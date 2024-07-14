@@ -10,7 +10,7 @@ from functools import reduce
 from uuid import UUID
 
 from rdflib import URIRef
-from rdflib.namespace import XSD, RDF, RDFS
+from rdflib.namespace import XSD, RDF
 from sqlalchemy.orm.decl_api import DeclarativeBase
 from pydantic import BaseModel, Field, field_validator, create_model, ConfigDict, field_serializer, model_validator
 from pydantic.fields import FieldInfo

@@ -4,7 +4,6 @@ from typing import Optional, Annotated
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager, suppress
 
-import anyio
 from sqlalchemy import select, text
 from sqlalchemy.sql.functions import func
 from fastapi import HTTPException, Depends, status
@@ -136,6 +135,7 @@ async def agent_session(agent: Optional[AgentModel]):
 
 @asynccontextmanager
 async def escalated_session(session):
+    current_user = None
     try:
         current_user = await session.scalar(text("select current_user"))
         current_user = current_user.split("__")[1]

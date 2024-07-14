@@ -1,19 +1,19 @@
 """The FastAPI server"""
 from typing import List, Dict, Annotated, Tuple, Union, Optional
 from contextlib import asynccontextmanager
-from datetime import timedelta, datetime
+from datetime import datetime
 from json import JSONDecodeError
 from itertools import chain
 import logging
 from uuid import UUID
 
 from typing_extensions import TypedDict
-from pydantic import ConfigDict, BaseModel
-from sqlalchemy import select, text, delete
+from pydantic import BaseModel
+from sqlalchemy import select, delete
 from sqlalchemy.sql.functions import func
 from sqlalchemy.sql.expression import and_, literal_column
 from sqlalchemy.orm import joinedload, aliased
-from fastapi import FastAPI, HTTPException, Request, Depends, status, Response, Query
+from fastapi import FastAPI, HTTPException, Request, Depends, status, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.websockets import WebSocket
 from fastapi.responses import HTMLResponse
@@ -47,7 +47,7 @@ async def populate_app(app: FastAPI, initial=False):
     global KNOWN_DB_MODELS
     if initial:
         schemas, bases = await read_existing_projections()
-        ps = models_from_schemas(schemas)
+        models_from_schemas(schemas)
     EventSchema: type[GenericEventModel] = getEventModel()
 
     # Clear the old routes
@@ -211,7 +211,7 @@ async def read_agents_me(
 async def add_agent(model: AgentModelWithPw, response: Response, current_agent: CurrentAgentType) -> None:
     async with agent_session(current_agent) as session:
         # TODO: Password integrity rules
-        value = await session.scalar(func.create_agent(model.email, model.passwd, model.username, model.permissions))
+        await session.scalar(func.create_agent(model.email, model.passwd, model.username, model.permissions))
         await session.commit()
         response.status_code = status.HTTP_201_CREATED
         # location is not public... maybe for admin?
@@ -267,9 +267,9 @@ async def add_remote_source(model: RemoteSourceModel, response: Response, curren
     if  not current_agent.has_permission('add_source'):
         raise HTTPException(401)
     async with agent_session(current_agent) as session:
-        if source.local_name:
+        if model.local_name:
             raise HTTPException(400, "Remote sources cannot have a local name")
-        if not source.uri:
+        if not model.uri:
             raise HTTPException(400, "Remote sources need a URI")
         source = await Source.ensure(session, model.uri, None, model.prefix)
         await session.commit()
@@ -280,7 +280,7 @@ async def add_remote_source(model: RemoteSourceModel, response: Response, curren
 @app.get("/source")
 async def get_local_sources(current_agent: CurrentAgentType) -> Dict[str, PydanticURIRef]:
     async with agent_session(current_agent) as session:
-        r = await session.execute(select(Source).filter(Source.local_name != None))
+        r = await session.execute(select(Source).filter(Source.local_name.is_not(None)))
         return {s.local_name: s.uri for (s,) in r}
 
 
@@ -551,28 +551,26 @@ async def get_schema_context(schema_id: int, current_agent: CurrentAgentType) ->
 
 
 @app.get("/schema/{prefix}/{component}")
-async def get_schema_context(prefix: str, component:str, current_agent: CurrentAgentType) -> EventSchema:
+async def get_schema_component(prefix: str, component:str, current_agent: CurrentAgentType) -> EventSchema:
     async with agent_session(current_agent) as session:
-        r = await session.execute(
+        s: Optional[Struct] = await session.scalar(
             select(Struct).filter_by(subtype='hk_schema'
                 ).join(Struct.terms).filter_by(term=component
                 ).join(Term.vocabulary).filter_by(prefix=prefix))
-        if r:= r.one_or_none():
-            s: Struct = r[0]
+        if s:
             m = HkSchema.model_validate(s.value)
             return m.eventSchemas.get(component) or m.projectionSchemas.get(component)
         raise HTTPException(status_code=404, detail="Schema does not exist")
 
 
 @app.get("/schema/{prefix}/{component}/js")
-async def get_schema_context(prefix: str, component:str, current_agent: CurrentAgentType) -> Dict:
+async def get_schema_component_js(prefix: str, component:str, current_agent: CurrentAgentType) -> Dict:
     async with agent_session(current_agent) as session:
-        r = await session.execute(
+        s: Optional[Struct] = await session.execute(
             select(Struct).filter_by(subtype='hk_schema'
                 ).join(Struct.terms).filter_by(term=component
                 ).join(Term.vocabulary).filter_by(prefix=prefix))
-        if r:= r.one_or_none():
-            s: Struct = r[0]
+        if s:
             m = HkSchema.model_validate(s.value)
             c_schema = m.eventSchemas.get(component) or m.projectionSchemas.get(component)
             return c_schema.model_json_schema()
@@ -653,7 +651,7 @@ async def add_context(data: ContextData, response: Response, current_agent: Curr
     ctx = data.get('ctx')
     async with agent_session(current_agent) as session:
         # First make sure it's valid
-        ld_context = Context(ctx, base=url)
+        Context(ctx, base=url)
         vocab = await Vocabulary.ensure(session, url)
         r = await session.execute(select(Struct).filter_by(is_vocab=vocab.id, subtype='ld_context'))
         if context_struct := r.first():
@@ -684,7 +682,7 @@ async def get_handler(handler_id: int, current_agent: CurrentAgentType) -> Event
             joinedload(EventHandler.event_type).joinedload(Term.vocabulary),
             joinedload(EventHandler.target_range).joinedload(Term.vocabulary)))
         if not handler:
-            return HTTPException(404, "No such handler")
+            raise HTTPException(404, "No such handler")
         data = dict(handler.__dict__,
             event_type=handler.event_type.uri, target_range=handler.target_range.uri
         )
@@ -730,13 +728,14 @@ if not production:
 async def websocket(websocket: WebSocket):
     await websocket.accept()
     # Deciding to do the login within the WebSocket rather than use cookies.
+    agent_model = None
     while True:
         try:
             token_data = await websocket.receive_json()
         except JSONDecodeError as e:
             await websocket.send_json(dict(error=f"Invalid JSON {e.msg}"))
             continue
-        except WebSocketDisconnect as e:
+        except WebSocketDisconnect:
             return
         token = token_data.get('token')
         if not token:

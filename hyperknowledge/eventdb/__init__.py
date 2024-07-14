@@ -3,7 +3,7 @@ from datetime import datetime
 from threading import current_thread
 from uuid import UUID
 
-from pydantic import AnyUrl, constr
+from pydantic import constr
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import BIGINT
 from sqlalchemy.ext.asyncio import async_scoped_session, async_sessionmaker, create_async_engine

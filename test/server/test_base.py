@@ -4,7 +4,7 @@ from datetime import datetime
 import pytest
 from httpx import AsyncClient
 from httpx_ws import aconnect_ws
-from fastapi.security import OAuth2PasswordRequestForm
+# from fastapi.security import OAuth2PasswordRequestForm
 
 pytestmark = pytest.mark.anyio
 

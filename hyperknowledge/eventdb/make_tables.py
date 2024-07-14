@@ -4,17 +4,17 @@ from typing import List, Tuple, Dict
 from itertools import chain
 
 from sqlalchemy import (
-    Column, String, Boolean, DateTime, Date, Time, Float, Integer, BINARY, Text, select, text)
-from sqlalchemy.schema import CreateTable, CreateIndex
+    Column, String, Boolean, Date, Time, Float, Integer, BINARY, Text, select, text)
+from sqlalchemy.schema import CreateTable
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.dialects.postgresql import (INTERVAL, TIMESTAMP, ARRAY, insert)
 from pydantic import json, BaseModel
 from rdflib.namespace import XSD, RDF, RDFS
 
-from . import dbTopicId, QName, PydanticURIRef, as_tuple, as_tuple_or_scalar, owner_scoped_session
+from . import dbTopicId, PydanticURIRef, as_tuple, as_tuple_or_scalar, owner_scoped_session
 from .models import Base, ProjectionMixin, ProjectionTable, Struct, schema_defines_table, Term, Topic
 from .schemas import (
-    HkSchema, ProjectionAttributeSchema, ProjectionSchema, models_from_schemas, LangStringModel,
+    HkSchema, ProjectionAttributeSchema, ProjectionSchema, models_from_schemas,
     getProjectionSchemas, scalar_field_types)
 from .auth import escalated_session
 
@@ -63,7 +63,7 @@ def as_column(schema: ProjectionAttributeSchema) -> List[Column]:
         return [Column(schema.name, column_type, nullable=schema.optional)]
 
 
-def make_table(schema: ProjectionSchema, prefix: str, reloading=False) -> Base:
+def make_table(schema: ProjectionSchema, prefix: str, reloading=False) -> type[Base]:
     classname = f'{prefix.title()}{schema.name.title()}'
     columns = list(chain(*[as_column(s) for s in schema.attributes]))
     attributes = {c.name: c for c in columns}
@@ -73,7 +73,7 @@ def make_table(schema: ProjectionSchema, prefix: str, reloading=False) -> Base:
     return type(classname, (Base, ProjectionMixin), attributes)
 
 
-KNOWN_DB_MODELS: Dict[PydanticURIRef, Base] = {}
+KNOWN_DB_MODELS: Dict[PydanticURIRef, type[Base]] = {}
 
 
 def make_projections(schema: HkSchema, reload=False) -> List[Base]:
@@ -169,10 +169,10 @@ async def process_schema(schema: HkSchema, schema_json: json, url: str, prefix: 
             for range in as_tuple(attrib_schema.range):
                 range_prefix, range_term = schema.context.shrink_iri(range).split(':')
                 range_vocab = schema.context.expand(f'{range_prefix}:')
-                resource_type = await Term.ensure(session, range_term, range_vocab, range_prefix)
+                await Term.ensure(session, range_term, range_vocab, range_prefix)
     await create_tables(schema, db_schema.id, overwrite, session)
     make_projections(schema, True)
-    ps = models_from_schemas([schema])
+    models_from_schemas([schema])
     return db_schema
 
 
@@ -191,7 +191,7 @@ async def projection_to_db(session, projection: BaseModel, schema: ProjectionSch
             topic = await Topic.ensure_url(session, value)
             if as_tuple_or_scalar(attribS.range) in getProjectionSchemas():
                 # Implicitly: Not a tuple.
-                range_topic = await Topic.get_url(session, attribS.range)
+                range_topic = await Topic.get_by_uri(session, attribS.range)
                 # Here we are inferring type. Not sure that's right?
                 if range_topic.id not in topic.has_projections:
                     topic.has_projections.append(range_topic.id)

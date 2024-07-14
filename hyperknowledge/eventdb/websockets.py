@@ -113,7 +113,7 @@ class WebSocketHandler():
     async def listen(self, source_name: str, proc_name: Optional[str]=None, start_time:Union[QueuePosition, datetime]=QueuePosition.current, autoack=True) -> WebSocketProcessor:
         assert proc_name or source_name
         if proc_name in self.processors:
-            return
+            return self.processors[proc_name]
         # sessionmaker?
         async with owner_scoped_session() as session:
             q = select(EventProcessor).filter_by(owner_id=self.agent.id)
@@ -153,14 +153,14 @@ class WebSocketHandler():
     async def delete_processor(self, proc_name: str):
         await self.mute(proc_name)
         async with owner_scoped_session() as session:
-            r = await session.execute(
+            await session.execute(
                 delete(EventProcessor).where(owner_id=self.agent.id, name=proc_name))
             session.commit()
 
     async def close(self):
         for proc_name in self.processors:
             await self.mute(proc_name)
-        self.socket.close()
+        await self.socket.close()
 
     async def ack_event(self, proc_name: str, event_time: Optional[datetime] = None) -> datetime:
         # We're in the main thread; we want to run in the processor thread

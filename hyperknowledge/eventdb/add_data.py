@@ -11,7 +11,7 @@ from yaml import safe_load
 from sqlalchemy import select
 
 from hyperknowledge.eventdb import owner_scoped_session
-from .models import Struct, EventHandler, Term, Vocabulary, schema_defines_table
+from .models import Struct, EventHandler, Term, Vocabulary
 from .schemas import HkSchema, EventHandlerSchemas
 from .make_tables import process_schema
 from .context import Context
@@ -36,7 +36,7 @@ async def add_schema(url: str, prefix: str, fname: Path=None, overwrite: bool=Fa
     jsonf = await read_struct(url, fname)
     schema = HkSchema.model_validate(jsonf)
     async with owner_scoped_session() as session:
-        db_schema = await Struct.ensure(session, jsonf, 'hk_schema', url, prefix)
+        await Struct.ensure(session, jsonf, 'hk_schema', url, prefix)
         # Ensure all the terms
         await process_schema(schema, jsonf, url, prefix, overwrite, session)
         await session.commit()
@@ -73,12 +73,11 @@ async def add_handlers(url: str, fname: Path=None, overwrite=False):
 async def add_context_data(url: str, fname: Path=None, overwrite: bool = False):
     data = await read_struct(url, fname)
     # First make sure it's valid
-    ld_context = Context(data, base=url)
+    Context(data, base=url)
     async with owner_scoped_session() as session:
         vocab = await Vocabulary.ensure(session, url)
-        r = await session.execute(select(Struct).filter_by(is_vocab=vocab.id, subtype='ld_context'))
-        if context_struct := r.first():
-            context_struct = context_struct[0]
+        context_struct = await session.scalar(select(Struct).filter_by(is_vocab=vocab.id, subtype='ld_context'))
+        if context_struct:
             if not overwrite:
                 return context_struct
             context_struct.value = data

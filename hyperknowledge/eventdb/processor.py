@@ -23,7 +23,7 @@ from sqlalchemy.sql.functions import func
 from py_mini_racer import MiniRacer
 
 from .. import config, db_config_get, production
-from . import dbTopicId, as_tuple, owner_scoped_session
+from . import as_tuple, owner_scoped_session
 from .models import (
     Base, EventProcessor, Event, Term, Topic, EventHandler, UUIDentifier
 )
@@ -206,11 +206,11 @@ class ProjectionProcessor(PushProcessorQueue):
         event = ev_schema.model_validate(db_event)
         # get the event's schema
         hk_schema = HkSchema.model_validate(db_event.event_type.schema.value)
-        event_type = hk_schema.context.shrink_iri(event.data.type)
+        # event_type = hk_schema.context.shrink_iri(event.data.type)
         event_hk_schema = hk_schema.eventSchemas[event.data.type.split(':')[1]]
         projection_schemas = getProjectionSchemas()
         range_schemas_by_role: Dict[str, List[Tuple[ProjectionSchema, BaseModel, type[Base]]]] = {}
-        topic_by_role: Dict[str, dbTopicId] = {}
+        topic_by_role: Dict[str, Topic] = {}
         attrib_schema_by_name: Dict[str, EventAttributeSchema] = {}
         for attrib_schema in event_hk_schema.attributes:
             attrib_schema_by_name[attrib_schema.name] = attrib_schema
@@ -219,9 +219,9 @@ class ProjectionProcessor(PushProcessorQueue):
                 continue
             projection_data: List[Tuple[ProjectionSchema, BaseModel, type[Base]]] = []
             for range in as_tuple(attrib_schema.range):
-                range_schema, range_model = projection_schemas.get(range, (None, None))
-                if not range_schema:
+                if range not in projection_schemas:
                     continue
+                range_schema, range_model = projection_schemas[range]
                 range_db_model = KNOWN_DB_MODELS.get(range_schema.type)
                 if not range_db_model:
                     log.warning("Missing model! %s", range_schema.type)
@@ -262,11 +262,10 @@ class ProjectionProcessor(PushProcessorQueue):
                 # TODO: Check that range's id is in topic's as_projection
                 for range_schema, range_model, range_db_model in projection_data:
                     # TODO: Use Topic.has_projections to avoid a few loops
-                    db_projection = await session.execute(select(range_db_model).filter_by(id=entity_id.id, source_id=source.id, obsolete=None))
-                    if db_projection := db_projection.one_or_none():
+                    db_projection = await session.scalar(select(range_db_model).filter_by(id=entity_id.id, source_id=source.id, obsolete=None))
+                    if db_projection:
                         # Note: Using first matching projection. What happens if there are many matches
                         used_projection_data_by_role[attrib_schema.name] = (range_schema, range_model, range_db_model)
-                        db_projection = db_projection[0]
                         pd_projection = await db_to_projection(session, db_projection, range_model, range_schema)
                         db_object_by_role[attrib_schema.name] = db_projection
                         projection_by_role[attrib_schema.name] = pd_projection.model_dump(by_alias=True)
@@ -417,7 +416,7 @@ class Dispatcher(AbstractProcessorQueue, Thread):
             self.projection_processor.add_event(event)
             # TODO: Maybe the post-projection processor should be a separate dispatcher instead of just the websocket dispatcher?
             for processor in self.active_processors.values():
-                await processor.add_event(event)
+                processor.add_event(event)
             await self.ack_event(event)
         self.set_status(lifecycle.started)
 

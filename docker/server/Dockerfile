@@ -19,7 +19,6 @@ WORKDIR /opt
 
 # copy files needed for pip-install process
 COPY ./pyproject.toml /opt/hyperknowledge/pyproject.toml
-COPY ./setup.cfg /opt/hyperknowledge/setup.cfg
 
 WORKDIR /opt/hyperknowledge
 ENV LC_ALL="C.UTF-8"

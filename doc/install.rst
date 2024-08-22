@@ -8,20 +8,23 @@ Prerequisites: Ubuntu Jammy
 
 .. code-block:: shell-session
 
-    sudo apt install python3.10-dev postgresql-server-dev-15
+    sudo apt install python3.10-dev postgresql-server-dev-15 curl
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+Ensure that ``~/.cargo/bin`` is in the ``PATH``.
 
 Prerequisites: Mac
 ------------------
 
 .. code-block:: shell-session
 
-    brew install python@3.10 postgresql@14
+    brew install python@3.10 postgresql@14 uv
 
 
 Notes on prerequisites
 ----------------------
 
-* Python 3.10 is assumed, as found on Ubuntu Jammy. Python 3.11 also works.
+* Python 3.10 is assumed, as found on Ubuntu Jammy. Python 3.11 or 3.12 also works.
 * Postgres 15 is used on Ubuntu, but on mac, the homebrew postgres 15 recipe does not handle extensions as well as 14.
 
 
@@ -38,9 +41,8 @@ HyperKnowledge
 --------------
 
 1. Clone the repository and ``cd`` into it
-2. Create a virtual environment (``python3.10 -mvenv venv``) and activate it (``. ./venv/bin/activate``)
-3. Install the application (``pip install -e .``)
-  1. Note that the PyMiniRacer dependency can be hard to install on mac. There is a mac wheel [here](https://idealoom.org/wheelhouse/py_mini_racer-0.6.0-py2.py3-none-macosx_13_0_arm64.whl)
+2. Create a virtual environment (``uv venv``) and activate it (``. ./.venv/bin/activate``)
+3. Install the application (``uv sync --all-extras``)
 4. Create a skeleton config.ini file by calling initial setup. Exact arguments will depend on platform. The point is to pass database administrator credentials.
 
   1. Ubuntu, assuming a postgres user exists, and the current user is a sudoer:

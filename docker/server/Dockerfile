@@ -1,6 +1,6 @@
 FROM debian:bookworm-slim
 
-ENV DEBIAN_FRONTEND noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
 ARG	GITREPO=conversence/hyperknowledge
 ARG	GITBRANCH=main
 
@@ -11,8 +11,10 @@ RUN apt-get update -y  && \
     apt-get install -y \
             python3.11 \
             python3.11-venv \
-            postgresql-client-16 && \
-            apt-get upgrade -y
+            postgresql-client-16 \
+            curl && \
+    apt-get upgrade -y
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 WORKDIR /opt
 
 # copy files needed for pip-install process
@@ -23,10 +25,11 @@ WORKDIR /opt/hyperknowledge
 ENV LC_ALL="C.UTF-8"
 ENV LC_CTYPE="C.UTF-8"
 ENV PRODUCTION=1
-RUN python3.11 -mvenv venv && \
-    . venv/bin/activate && \
-    pip install --upgrade pip && \
-    pip install -e .
+ENV PATH=/root/.cargo/bin:$PATH
+
+RUN /root/.cargo/bin/uv venv && \
+    . .venv/bin/activate && \
+    /root/.cargo/bin/uv sync
 
 # copy files needed for setup and running
 COPY ./deploy /opt/hyperknowledge/deploy
@@ -40,7 +43,7 @@ ARG postgres_host=postgres
 # CMD can't insert values directly from an ARG (run-time vs build-time), so store it in an ENV
 ENV postgres_host_env=${postgres_host}
 
-CMD . venv/bin/activate && \
+CMD . .venv/bin/activate && \
     python scripts/initial_setup.py --app_name HyperKnowledge --host ${postgres_host_env} -p postgres --no-create-development --no-create-test --store-password && \
     python scripts/db_updater.py -d production init && \
     python scripts/db_updater.py -d production deploy && \

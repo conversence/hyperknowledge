@@ -534,6 +534,21 @@ async def update_local_source_permissions(
     current_agent: CurrentActiveAgentType,
     request: Request,
 ) -> Union[AgentSourceSelectivePermissionModel, AgentSourcePermissionModel]:
+    """
+    Updates the permissions for a local source in the event database.
+
+    Args:
+        source_name (str): The name of the source to update permissions for.
+        permission (Union[AgentSourceSelectivePermissionModelOptional, AgentSourcePermissionModelOptional]): The updated permission information.
+        current_agent (CurrentActiveAgentType): The currently active agent.
+        request (Request): The HTTP request object.
+
+    Returns:
+        Union[AgentSourceSelectivePermissionModel, AgentSourcePermissionModel]: The updated permission object.
+
+    Raises:
+        HTTPException: If the source or agent does not exist, or if the permission is being posted to the wrong source.
+    """
     permission_uri = PydanticURIRef(f"{request.base_url}/source/{source_name}")
     if permission.source and permission.source != permission_uri:
         raise HTTPException(status_code=404, detail="Posting on the wrong source")

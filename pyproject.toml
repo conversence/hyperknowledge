@@ -8,7 +8,7 @@ license = "AGPL-3.0-or-later"
 dependencies = [
   "anyio",
   "asyncpg-listen",
-  "asyncpg",
+  "asyncpg@git+https://github.com/MagicStack/asyncpg.git",
   "bcrypt",
   "fastapi",
   "greenlet",
@@ -54,3 +54,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["hyperknowledge"]
+
+[tool.hatch.metadata]
+allow-direct-references = true

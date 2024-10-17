@@ -136,7 +136,7 @@ async def admin_agent(clean_tables, client):
 
 @pytest.fixture(scope="function")
 async def admin_token(admin_agent, client) -> str:
-    form = OAuth2PasswordRequestForm(username="admin", password="admin")
+    form = OAuth2PasswordRequestForm(username="admin", password="admin", grant_type='password')
     response = await client.post("/token", data=form.__dict__)
     assert response.status_code == 200, response.json()
     return response.json()["access_token"]
@@ -199,7 +199,7 @@ async def quidam_agent(admin_token, client):
 
 @pytest.fixture(scope="function")
 async def quidam_token(quidam_agent, client) -> str:
-    form = OAuth2PasswordRequestForm(username="quidam", password="quidam")
+    form = OAuth2PasswordRequestForm(username="quidam", password="quidam", grant_type='password')
     response = await client.post("/token", data=form.__dict__)
     assert response.status_code == 200, response.json()
     return response.json()["access_token"]

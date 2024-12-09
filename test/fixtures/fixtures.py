@@ -93,7 +93,7 @@ def app(init_database) -> FastAPI:
 async def client(app) -> Iterator[AsyncClient]:
     async with LifespanManager(app):
         async with AsyncClient(
-            app=app, base_url="http://test", transport=ASGIWebSocketTransport(app)
+            base_url="http://test", transport=ASGIWebSocketTransport(app)
         ) as ac:
             yield ac
 

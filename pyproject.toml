@@ -26,6 +26,8 @@ dependencies = [
   "sqlalchemy",
   "uvicorn",
   "websockets",
+  "linkml>=1.8.3",
+  "sqlmodel>=0.0.21",
 ]
 requires-python = ">=3.11"
 

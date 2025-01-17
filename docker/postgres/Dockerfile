@@ -1,5 +1,5 @@
-FROM postgres:16.4-alpine as build
-RUN apk add curl tar make bash clang15 llvm15 musl-dev && \
+FROM postgres:17.2-alpine AS build
+RUN apk add curl tar make bash clang19 llvm19 musl-dev && \
   curl -L  https://github.com/michelp/pgjwt/tarball/master -o pgjwt.tgz && \
   tar zxf pgjwt.tgz && \
   mv michelp-pgjwt-* pgjwt && \
@@ -11,9 +11,9 @@ RUN apk add curl tar make bash clang15 llvm15 musl-dev && \
   mv fboulnois-pg_uuidv7-* uuidv7 && \
   cd uuidv7 && \
   make && \
-  /usr/lib/llvm15/bin/llvm-lto -thinlto -thinlto-action=thinlink -o pg_uuidv7.index.bc pg_uuidv7.bc
+  /usr/lib/llvm19/bin/llvm-lto -thinlto -thinlto-action=thinlink -o pg_uuidv7.index.bc pg_uuidv7.bc
 
-FROM postgres:16.4-alpine
+FROM postgres:17.2-alpine
 COPY docker-healthcheck /usr/local/bin/
 COPY --from=build /pgjwt /pgjwt
 COPY --from=build /uuidv7 /uuidv7

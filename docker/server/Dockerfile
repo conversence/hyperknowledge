@@ -9,9 +9,9 @@ RUN apt-get update -y  && \
     /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y && \
     apt-get update -y && \
     apt-get install -y \
-            python3.11 \
-            python3.11-venv \
-            postgresql-client-16 \
+            python3.13 \
+            python3.13-venv \
+            postgresql-client-17 \
             curl && \
     apt-get upgrade -y
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh

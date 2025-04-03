@@ -1,4 +1,4 @@
-FROM postgres:17.2-alpine AS build
+FROM postgres:17.4-alpine AS build
 RUN apk add curl tar make bash clang19 llvm19 musl-dev && \
   curl -L  https://github.com/michelp/pgjwt/tarball/master -o pgjwt.tgz && \
   tar zxf pgjwt.tgz && \
@@ -13,7 +13,7 @@ RUN apk add curl tar make bash clang19 llvm19 musl-dev && \
   make && \
   /usr/lib/llvm19/bin/llvm-lto -thinlto -thinlto-action=thinlink -o pg_uuidv7.index.bc pg_uuidv7.bc
 
-FROM postgres:17.2-alpine
+FROM postgres:17.4-alpine
 COPY docker-healthcheck /usr/local/bin/
 COPY --from=build /pgjwt /pgjwt
 COPY --from=build /uuidv7 /uuidv7

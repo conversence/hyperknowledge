@@ -28,6 +28,7 @@ dependencies = [
   "websockets",
   "linkml>=1.8.3",
   "sqlmodel>=0.0.21",
+  "jsonasobj==2.0.2.dev4",
 ]
 requires-python = ">=3.11"
 
